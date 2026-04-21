@@ -1,5 +1,8 @@
+#define VK_USE_PLATFORM_WIN32_KHR
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
 
 #include<iostream>
 #include <stdexcept>
@@ -7,6 +10,7 @@
 #include<cstring>
 #include<vector>
 #include<optional>
+#include <set>
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -37,7 +41,14 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
 		func(instance, debugMessenger, pAllocator);
 	}
 }
+struct QueueFamilyIndices {//不同队列族序号变量组成的结构体.用optional包装int，好处是能使用undefined表示族不存在
+	std::optional<uint32_t> graphicsFamily;//图像渲染功能的队列族序号
+	std::optional<uint32_t> presentFamily;//窗口表面呈现能力的队列族序号
 
+	bool isComplete() {//检查所需族是否存在
+		return graphicsFamily.has_value() && presentFamily.has_value();
+	}
+};
 
 class HelloTriangleApplication {
 public:
@@ -51,9 +62,13 @@ private:
 	GLFWwindow* window;
 	VkInstance instance;
 	VkDebugUtilsMessengerEXT debugMessenger;
+
+	VkSurfaceKHR surface;//表面，用于呈现渲染的图像
+
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;//物理设备：显卡存储在此句柄
 	VkDevice device;//存储逻辑设备的句柄，逻辑设备是对物理设备的抽象，提供了与物理设备交互的接口
 	VkQueue graphicsQueue;//存储图形队列的句柄，图形队列是逻辑设备提供的一种特殊类型的队列，用于提交图形命令
+	VkQueue presentQueue;//存储呈现队列的句柄
 	void initWindow() {
 		glfwInit();
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -63,6 +78,7 @@ private:
 	void initVulkan() {
 		createInstance();
 		setupDebugMessenger();
+		createSurface();
 		pickPhysicalDevice();
 		createLogicalDevice();
 	}
@@ -75,6 +91,7 @@ private:
 		if (enableValidationLayers) {
 			DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
 		}
+		vkDestroySurfaceKHR(instance, surface, nullptr);//确保在实例之前销毁表面
 		vkDestroyInstance(instance, nullptr);
 		glfwDestroyWindow(window);
 		glfwTerminate();
@@ -120,6 +137,11 @@ private:
 			throw std::runtime_error("failed to create instance!");
 		}
 	}
+	void createSurface() {
+		if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create window surface!");
+		}
+	}
 	void pickPhysicalDevice() {//找显卡
 		uint32_t deviceCount = 0;//经典的先查询数量再vector保存所有显卡
 		vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
@@ -139,14 +161,6 @@ private:
 			throw std::runtime_error("failed to find a suitable GPU!");
 		}
 	}
-
-	struct QueueFamilyIndices {//不同队列族序号变量组成的结构体.用optional包装int，好处是能使用undefined表示族不存在
-		std::optional<uint32_t> graphicsFamily;
-
-		bool isComplete() {//把检查所需族是否存在封装在此。原实现于isDeviceSuitable函数中。
-			return graphicsFamily.has_value();
-		}
-	};
 	QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {//队列族，显卡的不同功能由不同的队列族提供
 		QueueFamilyIndices indices;
 
@@ -157,12 +171,18 @@ private:
 		vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
 		
 		int i = 0;
-		for (const auto& queueFamily : queueFamilies) {//找到能提供图形功能的队列族序号
-			if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+		for (const auto& queueFamily : queueFamilies) {//找到能提供所需功能的队列族序号
+			if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {//检查队列族图形能力
 				indices.graphicsFamily = i;
 			}
 
-			if (indices.isComplete()) {//找到就退出
+			VkBool32 presentSupport = false;//检查队列族的窗口表面呈现能力
+			vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
+			if (presentSupport) {
+				indices.presentFamily = i;
+			}
+
+			if (indices.isComplete()) {//都找到了就退出
 				break;
 			}
 
@@ -177,30 +197,36 @@ private:
 	}
 	void createLogicalDevice() {//创建逻辑设备
 		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);//找出提供图形功能的队列族序号
-		//根据队列族创建队列
-		VkDeviceQueueCreateInfo queueCreateInfo{};//在此结构体填入队列信息
-		queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-		queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value();//队列族序号
-		queueCreateInfo.queueCount = 1;//每个队列族可以有多个队列，但我们只需要一个
-
+		//根据队列族创建队列信息
+		std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;//每个队列族的队列创建信息
+		std::set<uint32_t> uniqueQueueFamilies = { indices.graphicsFamily.value(), indices.presentFamily.value() };//每个队列族的序号，去重
 		float queuePriority = 1.0f;//即使只有一个队列，也要为其指定优先级，范围是0.0到1.0。
-		queueCreateInfo.pQueuePriorities = &queuePriority;
+		for (uint32_t queueFamily : uniqueQueueFamilies) {//每个队列族都要创建一个队列创建信息结构体
+			VkDeviceQueueCreateInfo queueCreateInfo{};//在此结构体填入队列信息
+			queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+			queueCreateInfo.queueFamilyIndex = queueFamily;
+			queueCreateInfo.queueCount = 1;//每个队列族可以有多个队列，但我们只需要一个
+			queueCreateInfo.pQueuePriorities = &queuePriority;//设置优先级
+			queueCreateInfos.push_back(queueCreateInfo);
+		}
 
 		VkPhysicalDeviceFeatures deviceFeatures{};//物理设备支持的功能，逻辑设备需要的功能必须在此结构体中指定
 
 		//创建逻辑设备
+		//用以上得到的两个结构体完成
 		VkDeviceCreateInfo createInfo{};//在此结构体填入逻辑设备信息
 		createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-		createInfo.pQueueCreateInfos = &queueCreateInfo;//添加指向队列创建信息和设备功能结构的指针
+		createInfo.pQueueCreateInfos = queueCreateInfos.data();//添加指向队列创建信息和设备功能结构的指针
 		createInfo.pEnabledFeatures = &deviceFeatures;
-		createInfo.queueCreateInfoCount = 1;
+		createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
 		createInfo.enabledExtensionCount = 0;
 
 		if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {//"参数是要交互的物理设备、我们刚刚指定的队列和使用信息、可选的分配回调指针以及指向存储逻辑设备句柄的变量的指针"
 			throw std::runtime_error("failed to create logical device!");
 		}
-		//检索队列句柄
+		//存储所需队列
 		vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);//参数是逻辑设备、队列族、队列索引以及指向存储队列句柄的变量的指针
+		vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
 	}
 	//验证层相关
 	void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo) {
