@@ -53,6 +53,7 @@ private:
 	VkDebugUtilsMessengerEXT debugMessenger;
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;//物理设备：显卡存储在此句柄
 	VkDevice device;//存储逻辑设备的句柄，逻辑设备是对物理设备的抽象，提供了与物理设备交互的接口
+	VkQueue graphicsQueue;//存储图形队列的句柄，图形队列是逻辑设备提供的一种特殊类型的队列，用于提交图形命令
 	void initWindow() {
 		glfwInit();
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -77,6 +78,7 @@ private:
 		vkDestroyInstance(instance, nullptr);
 		glfwDestroyWindow(window);
 		glfwTerminate();
+		vkDestroyDevice(device, nullptr);//销毁逻辑设备
 	}
 	void createInstance() {
 		if (enableValidationLayers && !checkValidationLayerSupport()) {
@@ -173,7 +175,33 @@ private:
 		QueueFamilyIndices indices = findQueueFamilies(device);//检查显卡是否支持图形功能
 		return indices.isComplete();
 	}
+	void createLogicalDevice() {//创建逻辑设备
+		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);//找出提供图形功能的队列族序号
+		//根据队列族创建队列
+		VkDeviceQueueCreateInfo queueCreateInfo{};//在此结构体填入队列信息
+		queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+		queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value();//队列族序号
+		queueCreateInfo.queueCount = 1;//每个队列族可以有多个队列，但我们只需要一个
 
+		float queuePriority = 1.0f;//即使只有一个队列，也要为其指定优先级，范围是0.0到1.0。
+		queueCreateInfo.pQueuePriorities = &queuePriority;
+
+		VkPhysicalDeviceFeatures deviceFeatures{};//物理设备支持的功能，逻辑设备需要的功能必须在此结构体中指定
+
+		//创建逻辑设备
+		VkDeviceCreateInfo createInfo{};//在此结构体填入逻辑设备信息
+		createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+		createInfo.pQueueCreateInfos = &queueCreateInfo;//添加指向队列创建信息和设备功能结构的指针
+		createInfo.pEnabledFeatures = &deviceFeatures;
+		createInfo.queueCreateInfoCount = 1;
+		createInfo.enabledExtensionCount = 0;
+
+		if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {//"参数是要交互的物理设备、我们刚刚指定的队列和使用信息、可选的分配回调指针以及指向存储逻辑设备句柄的变量的指针"
+			throw std::runtime_error("failed to create logical device!");
+		}
+		//检索队列句柄
+		vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);//参数是逻辑设备、队列族、队列索引以及指向存储队列句柄的变量的指针
+	}
 	//验证层相关
 	void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo) {
 		createInfo = {};
