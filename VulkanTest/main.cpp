@@ -16,7 +16,7 @@
 #include <cstdint> // Necessary for uint32_t
 #include <limits> // Necessary for std::numeric_limits
 #include <algorithm> // Necessary for std::clamp
-#include<Windows.h>
+#include <fstream>
 
 
 const uint32_t WIDTH = 800;
@@ -412,7 +412,56 @@ private:
 		}
 	}
 	//图形管线相关
-	void createGraphicsPipeline() {
+	static std::vector<char> readFile(const std::string& filename) {//读取shader文件，得到其二进制码
+		std::ifstream file(filename, std::ios::ate | std::ios::binary);//从末尾以二进制读取
+
+		if (!file.is_open()) {
+			throw std::runtime_error("failed to open file!");
+		}
+		size_t fileSize = (size_t)file.tellg();//从末尾，故能得到文件大小
+		std::vector<char> buffer(fileSize);
+		file.seekg(0);//从头按文件大小读入存储
+		file.read(buffer.data(), fileSize);
+		file.close();
+		return buffer;
+	}
+	VkShaderModule createShaderModule(const std::vector<char>& code) {//通过shader的二进制码，把shader信息包装为着色器模块
+		VkShaderModuleCreateInfo createInfo{};
+		createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+		createInfo.codeSize = code.size();
+		createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());//字节码的大小是以字节为单位指定的，但是字节码指针是 uint32_t 指针，而不是 char 指针，需转换
+		VkShaderModule shaderModule;
+		if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create shader module!");
+		}
+		return shaderModule;
+	}
+	void createGraphicsPipeline() {//创建图形管线
+		auto vertShaderCode = readFile("shaders/vert.spv");//顶点着色器二进制码
+		auto fragShaderCode = readFile("shaders/frag.spv");//片段着色器二进制码
+
+		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);//着色器模块只用于传递shader信息，故不是类成员，在函数内创建销毁。
+		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+		//为实际使用着色器信息，通过结构体分配给特定的管线阶段
+		VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+		vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;//必须指定阶段
+		vertShaderStageInfo.module = vertShaderModule;//使用的着色器模块
+		vertShaderStageInfo.pName = "main";//shader入口函数
+
+		VkPipelineShaderStageCreateInfo fragShaderStageInfo{};//同理
+		fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+		fragShaderStageInfo.module = fragShaderModule;
+		fragShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };//管线阶段数组
+
+
+
+		vkDestroyShaderModule(device, fragShaderModule, nullptr);
+		vkDestroyShaderModule(device, vertShaderModule, nullptr);
 	}
 
 	//验证层相关
