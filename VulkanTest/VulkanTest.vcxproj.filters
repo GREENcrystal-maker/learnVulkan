@@ -23,5 +23,8 @@
     <None Include=".gitignore" />
     <None Include="shaders\shader.vert" />
     <None Include="shaders\shader.frag" />
+    <None Include="compile.bat">
+      <Filter>源文件</Filter>
+    </None>
   </ItemGroup>
 </Project>

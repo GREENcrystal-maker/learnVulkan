@@ -89,6 +89,8 @@ private:
 	VkFormat swapChainImageFormat;//为交换链图像选择的格式和范围存储在成员变量中
 	VkExtent2D swapChainExtent;
 	std::vector<VkImageView> swapChainImageViews;
+	VkRenderPass renderPass;//渲染过程
+	VkPipelineLayout pipelineLayout;//管线布局
 	void initWindow() {
 		glfwInit();
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -103,6 +105,7 @@ private:
 		createLogicalDevice();
 		createSwapChain();
 		createImageViews();
+		createRenderPass();
 		createGraphicsPipeline();
 	}
 	void mainLoop() {
@@ -111,6 +114,8 @@ private:
 		}
 	}
 	void cleanUp() {
+		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+		vkDestroyRenderPass(device, renderPass, nullptr);
 		for (auto imageView : swapChainImageViews) {
 			vkDestroyImageView(device, imageView, nullptr);
 		}
@@ -457,13 +462,127 @@ private:
 		fragShaderStageInfo.pName = "main";
 
 		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };//管线阶段数组
+		
+		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};//用于创建管线布局的结构体，描述了管线使用的资源类型和数量，如uniform变量、push常量等，此处不使用任何资源，所以成员值为0或nullptr
+		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		pipelineLayoutInfo.setLayoutCount = 0; // Optional
+		pipelineLayoutInfo.pSetLayouts = nullptr; // Optional
+		pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
+		pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
 
+		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create pipeline layout!");
+		}
 
+		//固定功能，即图形管线的大部分阶段，被烘焙到不可变的管线状态对象
+		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};//传递给顶点着色器的顶点数据的格式
+		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+		vertexInputInfo.vertexBindingDescriptionCount = 0;
+		vertexInputInfo.pVertexBindingDescriptions = nullptr; // Optional
+		vertexInputInfo.vertexAttributeDescriptionCount = 0;
+		vertexInputInfo.pVertexAttributeDescriptions = nullptr; // Optional
+
+		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};//输入汇编，它描述了图元如何从顶点数据中被组装出来，以及是否启用重启图元功能
+		inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+		inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;//将从顶点绘制的几何图形类型
+		inputAssembly.primitiveRestartEnable = VK_FALSE;//不启动，则顶点按顺序从顶点缓冲区按索引加载；否则自己指定索引进行复用等优化
+
+		std::vector<VkDynamicState> dynamicStates = {//动态状态，不重新创建管线就能改变的状态。忽略值的配置，需绘制时指定
+			VK_DYNAMIC_STATE_VIEWPORT,//视口和裁剪矩形
+			VK_DYNAMIC_STATE_SCISSOR
+		};
+		VkPipelineDynamicStateCreateInfo dynamicState{};
+		dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+		dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+		dynamicState.pDynamicStates = dynamicStates.data();
+
+		VkPipelineViewportStateCreateInfo viewportState{};////视口和裁剪矩形的管线创建信息
+		viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+		viewportState.viewportCount = 1;//只需指定数量，具体值在绘制时指定
+		viewportState.scissorCount = 1;
+		//当不指定这两个为动态，需创建viewport和scissor对象（指定大小等值），创建数组（因为可以有多个），并将上结构体的pViewports，pScissors成员指向他们
+		
+		//图元（Primitive） 指的是由一个或多个顶点（Vertex）按照特定规则组合而成的基本几何形状，它是图形渲染管线中，顶点处理之后、光栅化之前的基本处理单元。前面已topology定义顶点如何构成图元
+		VkPipelineRasterizationStateCreateInfo rasterizer{};//光栅化器
+		rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+		rasterizer.depthClampEnable = VK_FALSE;//超出摄像机深度的近平面和远平面的片段是否将被钳制到它们，此处丢弃超出部分。
+		rasterizer.rasterizerDiscardEnable = VK_FALSE;//是否丢弃所有图元，直接跳过光栅化阶段
+		rasterizer.polygonMode = VK_POLYGON_MODE_FILL;//确定如何为几何图形生成片段，此处用片段填充多边形的区域
+		rasterizer.lineWidth = 1.0f;//以片段数量描述线条的粗细
+		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;//面剔除类型。可以禁用剔除，剔除正面、剔除背面或两者都剔除。此处剔除背面
+		rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;//指定被认为是正面的面的顶点顺序，可以是顺时针或逆时针。
+
+		VkPipelineMultisampleStateCreateInfo multisampling{};//多重采样，这是执行抗锯齿的方法之一
+		multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+		multisampling.sampleShadingEnable = VK_FALSE;
+		multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+		multisampling.minSampleShading = 1.0f; // Optional
+		multisampling.pSampleMask = nullptr; // Optional
+		multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
+		multisampling.alphaToOneEnable = VK_FALSE; // Optional
+		//颜色混合，两个结构体
+		VkPipelineColorBlendAttachmentState colorBlendAttachment{};//包含每个附加帧缓冲区的配置，我们只有一个缓冲区
+		colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+		colorBlendAttachment.blendEnable = VK_FALSE;//来自片段着色器的新颜色将直接传递，不作修改，否则会与帧缓冲区中已有的颜色进行混合，混合方式由以下四个成员指定
+		colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
+		colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+		colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
+		colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
+		colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+		colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
+
+		VkPipelineColorBlendStateCreateInfo colorBlending{};//全局设置
+		colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+		colorBlending.logicOpEnable = VK_FALSE;
+		colorBlending.logicOp = VK_LOGIC_OP_COPY; // Optional
+		colorBlending.attachmentCount = 1;
+		colorBlending.pAttachments = &colorBlendAttachment;//引用所有帧缓冲区的结构体数组，只有一个所以直接引用对象
+		colorBlending.blendConstants[0] = 0.0f; // Optional
+		colorBlending.blendConstants[1] = 0.0f; // Optional
+		colorBlending.blendConstants[2] = 0.0f; // Optional
+		colorBlending.blendConstants[3] = 0.0f; // Optional
 
 		vkDestroyShaderModule(device, fragShaderModule, nullptr);
 		vkDestroyShaderModule(device, vertShaderModule, nullptr);
 	}
+	//渲染过程，是管线创建需要的，描述一次渲染操作的整体流程和规则，包含 渲染时使用的帧缓冲附件 有多少颜色和深度缓冲区 每个缓冲区使用多少个采样 它们的内容在整个渲染操作中应该如何处理，所有这些信息都封装在一个渲染过程对象中
+	void createRenderPass() {//创建渲染过程对象
+		VkAttachmentDescription colorAttachment{};//描述帧缓冲区附件的结构体，此处只有一个颜色附件
+		colorAttachment.format = swapChainImageFormat;//交换链图像的格式
+		colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;//每个像素使用多少个采样，1表示不使用多重采样
+		//决定在渲染之前和渲染之后如何处理附件中的数据
+		//应用于颜色和深度数据
+		colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;//此处为在开始时将值清除为常量
+		colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;//此处为渲染的内容将存储在内存中，并且可以稍后读取。因为这里需要将图像展示到屏幕上，所以需要存储渲染结果
+		colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		//应用于模板数据
+		colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;//此应用不会对模板缓冲区执行任何操作，因此加载和存储的结果无关紧要。
+		colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		//渲染前后使用的布局
+		colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;//图像在渲染过程开始之前将具有的布局，此处不在乎图像之前的布局是什么
+		colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;//渲染过程完成时自动转换到的布局，此处在交换链中呈现的图像，因为希望图像在渲染后可以使用交换链进行呈现
+		//子过程 单个渲染过程可以由多个子过程组成。子过程是后续渲染操作，依赖于前一个过程中的帧缓冲区内容
+		VkAttachmentReference colorAttachmentRef{};
+		colorAttachmentRef.attachment = 0;//本应用使用单个子过程
+		colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;//子过程中的布局，此处提供最佳性能
+		VkSubpassDescription subpass{};
+		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;//说明这是一个图形子过程，其他还有计算子过程
+		subpass.colorAttachmentCount = 1;
+		subpass.pColorAttachments = &colorAttachmentRef;//引用颜色附件
+		//创建渲染过程
+		VkRenderPassCreateInfo renderPassInfo{};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+		renderPassInfo.attachmentCount = 1;
+		renderPassInfo.pAttachments = &colorAttachment;
+		renderPassInfo.subpassCount = 1;
+		renderPassInfo.pSubpasses = &subpass;
 
+		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create render pass!");
+		}
+
+	}
 	//验证层相关
 	void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo) {
 		createInfo = {};
