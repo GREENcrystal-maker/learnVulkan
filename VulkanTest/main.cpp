@@ -88,9 +88,13 @@ private:
 	std::vector<VkImage> swapChainImages;//交换链VkImage 的句柄，渲染操作期间引用
 	VkFormat swapChainImageFormat;//为交换链图像选择的格式和范围存储在成员变量中
 	VkExtent2D swapChainExtent;
-	std::vector<VkImageView> swapChainImageViews;
+	std::vector<VkImageView> swapChainImageViews;//每个交换链图像的图像视图
 	VkRenderPass renderPass;//渲染过程
 	VkPipelineLayout pipelineLayout;//管线布局
+	VkPipeline graphicsPipeline;//管线
+	std::vector<VkFramebuffer> swapChainFramebuffers;
+	VkCommandPool commandPool;//命令池，管理内存分配和命令缓冲区的生命周期
+	VkCommandBuffer commandBuffer;//命令缓冲区，记录要提交给图形队列的渲染命令
 	void initWindow() {
 		glfwInit();
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -107,13 +111,22 @@ private:
 		createImageViews();
 		createRenderPass();
 		createGraphicsPipeline();
+		createFramebuffers();
+		createCommandPool();
+		createCommandBuffer();
 	}
 	void mainLoop() {
 		while (!glfwWindowShouldClose(window)) {
 			glfwPollEvents();
+			drawFrame();
 		}
 	}
 	void cleanUp() {
+		vkDestroyCommandPool(device, commandPool, nullptr);
+		for (auto framebuffer : swapChainFramebuffers) {
+			vkDestroyFramebuffer(device, framebuffer, nullptr);
+		}
+		vkDestroyPipeline(device, graphicsPipeline, nullptr);
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		vkDestroyRenderPass(device, renderPass, nullptr);
 		for (auto imageView : swapChainImageViews) {
@@ -174,6 +187,7 @@ private:
 			throw std::runtime_error("failed to create window surface!");
 		}
 	}
+
 	//物理与逻辑设备相关
 	void pickPhysicalDevice() {//找显卡
 		uint32_t deviceCount = 0;//经典的先查询数量再vector保存所有显卡
@@ -284,6 +298,7 @@ private:
 		vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);//参数是逻辑设备、队列族、队列索引以及指向存储队列句柄的变量的指针
 		vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
 	}
+
 	//交换链相关
 	SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device) {//查询交换链细节信息
 		SwapChainSupportDetails details;
@@ -416,6 +431,7 @@ private:
 			}
 		}
 	}
+
 	//图形管线相关
 	static std::vector<char> readFile(const std::string& filename) {//读取shader文件，得到其二进制码
 		std::ifstream file(filename, std::ios::ate | std::ios::binary);//从末尾以二进制读取
@@ -461,20 +477,9 @@ private:
 		fragShaderStageInfo.module = fragShaderModule;
 		fragShaderStageInfo.pName = "main";
 
-		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };//管线阶段数组
+		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };//管线阶段数组，记录有哪几个管线阶段，此处为顶点和片段阶段
 		
-		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};//用于创建管线布局的结构体，描述了管线使用的资源类型和数量，如uniform变量、push常量等，此处不使用任何资源，所以成员值为0或nullptr
-		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-		pipelineLayoutInfo.setLayoutCount = 0; // Optional
-		pipelineLayoutInfo.pSetLayouts = nullptr; // Optional
-		pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
-		pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
-
-		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
-			throw std::runtime_error("failed to create pipeline layout!");
-		}
-
-		//固定功能，即图形管线的大部分阶段，被烘焙到不可变的管线状态对象
+		//固定功能，即图形管线的大部分阶段，其中大部分被烘焙到不可变的管线状态对象，其他用动态状态设定为可变
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};//传递给顶点着色器的顶点数据的格式
 		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 		vertexInputInfo.vertexBindingDescriptionCount = 0;
@@ -496,7 +501,7 @@ private:
 		dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
 		dynamicState.pDynamicStates = dynamicStates.data();
 
-		VkPipelineViewportStateCreateInfo viewportState{};////视口和裁剪矩形的管线创建信息
+		VkPipelineViewportStateCreateInfo viewportState{};////视口和裁剪矩形的管线创建信息。因为指定为了动态状态，所以只需指定数量，具体值在绘制时指定
 		viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
 		viewportState.viewportCount = 1;//只需指定数量，具体值在绘制时指定
 		viewportState.scissorCount = 1;
@@ -520,7 +525,7 @@ private:
 		multisampling.pSampleMask = nullptr; // Optional
 		multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
 		multisampling.alphaToOneEnable = VK_FALSE; // Optional
-		//颜色混合，两个结构体
+		//颜色混合，片段着色器返回颜色后，需要将其与帧缓冲区中已有的颜色组合//两个结构体，配置颜色混合方式
 		VkPipelineColorBlendAttachmentState colorBlendAttachment{};//包含每个附加帧缓冲区的配置，我们只有一个缓冲区
 		colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 		colorBlendAttachment.blendEnable = VK_FALSE;//来自片段着色器的新颜色将直接传递，不作修改，否则会与帧缓冲区中已有的颜色进行混合，混合方式由以下四个成员指定
@@ -542,19 +547,52 @@ private:
 		colorBlending.blendConstants[2] = 0.0f; // Optional
 		colorBlending.blendConstants[3] = 0.0f; // Optional
 
+		//管线布局
+		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};//用于创建管线布局的结构体，描述了管线使用的资源类型和数量，如uniform变量、push常量等，此处不使用任何资源，所以成员值为0或nullptr
+		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		pipelineLayoutInfo.setLayoutCount = 0; // Optional
+		pipelineLayoutInfo.pSetLayouts = nullptr; // Optional
+		pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
+		pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
+
+		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create pipeline layout!");
+		}
+
+		VkGraphicsPipelineCreateInfo pipelineInfo{};
+		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		pipelineInfo.stageCount = 2;//顶点和片段
+		pipelineInfo.pStages = shaderStages;//引用管线阶段数组
+		pipelineInfo.pVertexInputState = &vertexInputInfo;//固定功能阶段所有信息结构体
+		pipelineInfo.pInputAssemblyState = &inputAssembly;
+		pipelineInfo.pViewportState = &viewportState;
+		pipelineInfo.pRasterizationState = &rasterizer;
+		pipelineInfo.pMultisampleState = &multisampling;
+		pipelineInfo.pDepthStencilState = nullptr; // Optional
+		pipelineInfo.pColorBlendState = &colorBlending;
+		pipelineInfo.pDynamicState = &dynamicState;
+		pipelineInfo.layout = pipelineLayout;//布局
+		pipelineInfo.renderPass = renderPass;//引用渲染过程
+		pipelineInfo.subpass = 0;//用此管线的子通道的索引
+		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional 管线派生功能，用现有管线作为基础
+		pipelineInfo.basePipelineIndex = -1; // Optional
+		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create graphics pipeline!");
+		}
+
 		vkDestroyShaderModule(device, fragShaderModule, nullptr);
 		vkDestroyShaderModule(device, vertShaderModule, nullptr);
 	}
 	//渲染过程，是管线创建需要的，描述一次渲染操作的整体流程和规则，包含 渲染时使用的帧缓冲附件 有多少颜色和深度缓冲区 每个缓冲区使用多少个采样 它们的内容在整个渲染操作中应该如何处理，所有这些信息都封装在一个渲染过程对象中
 	void createRenderPass() {//创建渲染过程对象
 		VkAttachmentDescription colorAttachment{};//描述帧缓冲区附件的结构体，此处只有一个颜色附件
-		colorAttachment.format = swapChainImageFormat;//交换链图像的格式
+		colorAttachment.format = swapChainImageFormat;//使用交换链图像的格式
 		colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;//每个像素使用多少个采样，1表示不使用多重采样
 		//决定在渲染之前和渲染之后如何处理附件中的数据
 		//应用于颜色和深度数据
 		colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;//此处为在开始时将值清除为常量
 		colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;//此处为渲染的内容将存储在内存中，并且可以稍后读取。因为这里需要将图像展示到屏幕上，所以需要存储渲染结果
-		colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;//没有深度附件，所以不关心
 		colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 		//应用于模板数据
 		colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;//此应用不会对模板缓冲区执行任何操作，因此加载和存储的结果无关紧要。
@@ -570,7 +608,7 @@ private:
 		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;//说明这是一个图形子过程，其他还有计算子过程
 		subpass.colorAttachmentCount = 1;
 		subpass.pColorAttachments = &colorAttachmentRef;//引用颜色附件
-		//创建渲染过程
+		//创建 渲染过程
 		VkRenderPassCreateInfo renderPassInfo{};
 		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
 		renderPassInfo.attachmentCount = 1;
@@ -578,11 +616,116 @@ private:
 		renderPassInfo.subpassCount = 1;
 		renderPassInfo.pSubpasses = &subpass;
 
-		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
+		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {//2nd参数引用一个可选的 VkPipelineCache
 			throw std::runtime_error("failed to create render pass!");
 		}
 
 	}
+	void createFramebuffers() {//创建帧缓冲
+		//帧缓冲将实际访问图像的规则图像视图和描述了附件规则的渲染过程绑定.//具体是怎么绑定的？是把交换链每个图的图像视图作为渲染过程的附件。//每个交换链里的图像都有一个帧缓冲
+		swapChainFramebuffers.resize(swapChainImageViews.size());
+		for (size_t i = 0; i < swapChainImageViews.size(); i++) {
+			VkImageView attachments[] = {//取出来所有图像视图，作为渲染过程的附件
+				swapChainImageViews[i]
+			};
+
+			VkFramebufferCreateInfo framebufferInfo{};
+			framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+			framebufferInfo.renderPass = renderPass;
+			framebufferInfo.attachmentCount = 1;//每个附件只有一种功能，即作为颜色附件
+			framebufferInfo.pAttachments = attachments;
+			framebufferInfo.width = swapChainExtent.width;
+			framebufferInfo.height = swapChainExtent.height;
+			framebufferInfo.layers = 1;//图像数组中的层数。我们的交换链图像是单个图像，因此层数是 1
+
+			if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS) {
+				throw std::runtime_error("failed to create framebuffer!");
+			}
+		}
+	}
+	void createCommandPool() {//创建命令池
+		//绘制和内存传输这样的操作命令，一起提交，记录在命令缓冲区对象中
+		//命令缓冲区分配自命令池，命令池管理和分配内存用于一个或多个命令缓冲区，并且与特定的队列族相关联
+		QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
+
+		VkCommandPoolCreateInfo poolInfo{};
+		poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+		poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;//此处 允许单独重新记录命令缓冲区，如果没有此标志，则必须一起重置所有命令缓冲区。我们希望在每一帧都记录一个命令缓冲区，因此我们希望能够重置并重新记录它
+		poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();//命令缓冲区提交到设备队列进行执行。每个命令池只能分配在单一类型的队列上提交的命令缓冲区。此处记录用于绘图的命令所以填图形队列族。
+		if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create command pool!");
+		}
+	}
+	void createCommandBuffer() {//创建命令缓冲区
+		VkCommandBufferAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		allocInfo.commandPool = commandPool;//指定要分配的命令池
+		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;//指定是主命令缓冲区还是辅助命令缓冲区。此处为主~，可以提交到队列以执行，但不能从其他命令缓冲区调用。
+		allocInfo.commandBufferCount = 1;//指定缓冲区数量
+
+		if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS) {
+			throw std::runtime_error("failed to allocate command buffers!");
+		}
+	}
+	void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {//命令缓冲区记录，将我们要执行的命令写入命令缓冲区
+		VkCommandBufferBeginInfo beginInfo{};//开始记录命令缓冲区的结构体，指定我们将如何使用命令缓冲区以及一些优化提示
+		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		beginInfo.flags = 0; // Optional 指定我们将如何使用命令缓冲区。可选项对我们都不适用，填0
+		beginInfo.pInheritanceInfo = nullptr; // Optional 仅与辅助命令缓冲区相关。它指定从调用主命令缓冲区继承哪个状态
+
+		if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+			throw std::runtime_error("failed to begin recording command buffer!");
+		}
+		//启动渲染通道，绘制通过开始渲染通道来开始
+		VkRenderPassBeginInfo renderPassInfo{};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+		renderPassInfo.renderPass = renderPass;//渲染通道本身
+		renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];//imageindex是交换链图像索引，因为每个交换链图像都有一个帧缓冲，所以用索引找到对应的帧缓冲
+		renderPassInfo.renderArea.offset = { 0, 0 };//定义渲染区域，即将渲染的像素范围。此处为整个交换链图像大小，可获得最佳性能
+		renderPassInfo.renderArea.extent = swapChainExtent;
+		VkClearValue clearColor = { {{0.0f, 0.0f, 0.0f, 1.0f}} };//将清除颜色定义为简单的 100% 不透明度的黑色
+		renderPassInfo.clearValueCount = 1;
+		renderPassInfo.pClearValues = &clearColor;
+		vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);//启动//3rd参数：渲染通道命令将嵌入到主命令缓冲区本身中，并且不会执行辅助命令缓冲区
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);//绑定管线 //2nd参数指定管线类型，此处为图形管线
+		//指定为动态状态的，在此处发出绘制命令之前，指定具体值。这些值设置到命令缓冲区。
+		VkViewport viewport{};
+		viewport.x = 0.0f;
+		viewport.y = 0.0f;
+		viewport.width = static_cast<float>(swapChainExtent.width);
+		viewport.height = static_cast<float>(swapChainExtent.height);
+		viewport.minDepth = 0.0f;
+		viewport.maxDepth = 1.0f;
+		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+		VkRect2D scissor{};
+		scissor.offset = { 0, 0 };
+		scissor.extent = swapChainExtent;
+		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+		vkCmdDraw(commandBuffer, 3, 1, 0, 0);//绘制三角形命令//参数：顶点数量、实例数量、顶点偏移量、实例偏移量
+		vkCmdEndRenderPass(commandBuffer);//结束渲染通道
+		if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+			throw std::runtime_error("failed to record command buffer!");
+		}
+	}
+
+	//把所有绘制功能整合到一起
+	void drawFrame() {
+		/*渲染帧的步骤
+		 等待前一帧完成
+
+		从交换链获取图像
+
+		记录一个命令缓冲区，该缓冲区将场景绘制到该图像上
+
+		提交已记录的命令缓冲区
+
+		呈现交换链图像
+		*/
+
+	}
+
 	//验证层相关
 	void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo) {
 		createInfo = {};
@@ -649,6 +792,7 @@ private:
 	}
 };
 int main() {
+
 	HelloTriangleApplication	app;
 	try {
 		app.run();
