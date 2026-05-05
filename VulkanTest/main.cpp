@@ -95,6 +95,9 @@ private:
 	std::vector<VkFramebuffer> swapChainFramebuffers;
 	VkCommandPool commandPool;//命令池，管理内存分配和命令缓冲区的生命周期
 	VkCommandBuffer commandBuffer;//命令缓冲区，记录要提交给图形队列的渲染命令
+	VkSemaphore imageAvailableSemaphore;//两个信号量和一个栅栏
+	VkSemaphore renderFinishedSemaphore;
+	VkFence inFlightFence;
 	void initWindow() {
 		glfwInit();
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -114,6 +117,7 @@ private:
 		createFramebuffers();
 		createCommandPool();
 		createCommandBuffer();
+		createSyncObjects();
 	}
 	void mainLoop() {
 		while (!glfwWindowShouldClose(window)) {
@@ -122,6 +126,9 @@ private:
 		}
 	}
 	void cleanUp() {
+		vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
+		vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
+		vkDestroyFence(device, inFlightFence, nullptr);
 		vkDestroyCommandPool(device, commandPool, nullptr);
 		for (auto framebuffer : swapChainFramebuffers) {
 			vkDestroyFramebuffer(device, framebuffer, nullptr);
@@ -584,7 +591,7 @@ private:
 		vkDestroyShaderModule(device, vertShaderModule, nullptr);
 	}
 	//渲染过程，是管线创建需要的，描述一次渲染操作的整体流程和规则，包含 渲染时使用的帧缓冲附件 有多少颜色和深度缓冲区 每个缓冲区使用多少个采样 它们的内容在整个渲染操作中应该如何处理，所有这些信息都封装在一个渲染过程对象中
-	void createRenderPass() {//创建渲染过程对象
+	void createRenderPass() {//创建渲染过程对象   ！！渲染过程即渲染通道。
 		VkAttachmentDescription colorAttachment{};//描述帧缓冲区附件的结构体，此处只有一个颜色附件
 		colorAttachment.format = swapChainImageFormat;//使用交换链图像的格式
 		colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;//每个像素使用多少个采样，1表示不使用多重采样
@@ -619,7 +626,15 @@ private:
 		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {//2nd参数引用一个可选的 VkPipelineCache
 			throw std::runtime_error("failed to create render pass!");
 		}
-
+		VkSubpassDependency dependency{};//子通道依赖项，描述子通道之间的依赖关系，以及子通道与外部操作之间的依赖关系//子通道会自动处理图像布局转换。这些转换由子通道依赖关系控制
+		dependency.srcSubpass = VK_SUBPASS_EXTERNAL;//渲染通道之前或之后的隐式子通道
+		dependency.dstSubpass = 0;//索引，我们现在惟一的子通道
+		dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;//要等待的操作以及这些操作发生的阶段，此处等待交换链完成从图像的读取，通过等待颜色附件输出阶段本身来实现
+		dependency.srcAccessMask = 0;
+		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;//应该等待此操作的操作位于颜色附件阶段，并且涉及颜色附件的写入
+		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		renderPassInfo.dependencyCount = 1;
+		renderPassInfo.pDependencies = &dependency;//依赖项数组
 	}
 	void createFramebuffers() {//创建帧缓冲
 		//帧缓冲将实际访问图像的规则图像视图和描述了附件规则的渲染过程绑定.//具体是怎么绑定的？是把交换链每个图的图像视图作为渲染过程的附件。//每个交换链里的图像都有一个帧缓冲
@@ -710,7 +725,20 @@ private:
 		}
 	}
 
-	//把所有绘制功能整合到一起
+	//绘制相关
+	void createSyncObjects() {//创建同步对象
+		//vulkan默认异步；交换链和帧操作需要同步，因为有执行顺序。信号量和栅栏是两种不同的同步对象，信号量用于GPU的同步，而栅栏用于GPU和CPU的同步，分别用于交换链和帧操作
+		VkSemaphoreCreateInfo semaphoreInfo{};
+		semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+		VkFenceCreateInfo fenceInfo{};
+		fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;//为了第一帧不等待完成信号直接开始，将栅栏设置为“已发出信号”
+		if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS ||
+			vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS ||
+			vkCreateFence(device, &fenceInfo, nullptr, &inFlightFence) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create semaphores!");
+		}
+	}
 	void drawFrame() {
 		/*渲染帧的步骤
 		 等待前一帧完成
@@ -722,8 +750,44 @@ private:
 		提交已记录的命令缓冲区
 
 		呈现交换链图像
-		*/
 
+		可以看出他们是有顺序的
+		*/
+		vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);//等待前一帧完成//3rd参数，等待所有栅栏返回；4th参数，超时时间，此处禁用超时
+		//从交换链获取图像
+		uint32_t imageIndex;
+		vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);//禁用超时，选择完成后发出的信号量，已变为可用的交换链图像索引
+
+		vkResetCommandBuffer(commandBuffer, 0);//初始化命令缓冲区
+		recordCommandBuffer(commandBuffer, imageIndex);//记录命令缓冲区
+		//提交命令缓冲区
+		VkSubmitInfo submitInfo{};
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		VkSemaphore waitSemaphores[] = { imageAvailableSemaphore };//等待哪些信号量
+		VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };//在管道哪个阶段等待，此处为颜色附件输出阶段，因为我们需要在这个阶段之前等待图像可用
+		submitInfo.waitSemaphoreCount = 1;
+		submitInfo.pWaitSemaphores = waitSemaphores;
+		submitInfo.pWaitDstStageMask = waitStages;
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &commandBuffer;//实际提交执行的命令缓冲区
+		VkSemaphore signalSemaphores[] = { renderFinishedSemaphore };//执行完成发出的信号量
+		submitInfo.signalSemaphoreCount = 1;
+		submitInfo.pSignalSemaphores = signalSemaphores;
+		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence) != VK_SUCCESS) {//提交。last参数为执行完成触发的栅栏
+			throw std::runtime_error("failed to submit draw command buffer!");
+		}
+		//呈现
+		VkPresentInfoKHR presentInfo{};
+		presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+
+		presentInfo.waitSemaphoreCount = 1;
+		presentInfo.pWaitSemaphores = signalSemaphores;//等待缓冲区命令完成执行，即绘制三角形完成，再呈现
+		VkSwapchainKHR swapChains[] = { swapChain };//指定要向其显示图像的交换链以及每个交换链的图像索引
+		presentInfo.swapchainCount = 1;
+		presentInfo.pSwapchains = swapChains;
+		presentInfo.pImageIndices = &imageIndex;
+		presentInfo.pResults = nullptr; // Optional 指定一个 VkResult 值数组，以检查每个单独的交换链演示是否成功。如果您只使用单个交换链，则没有必要
+		vkQueuePresentKHR(presentQueue, &presentInfo);//提交将图像呈现给交换链的请求
 	}
 
 	//验证层相关
