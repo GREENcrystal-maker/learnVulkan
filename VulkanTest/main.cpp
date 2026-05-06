@@ -21,6 +21,7 @@
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
+const int MAX_FRAMES_IN_FLIGHT = 2;//两个飞行中的帧，即允许一帧的渲染（gpu）不干扰下一帧的录制（cpu），而不是必须等待前一帧完成才能开始渲染下一帧，这会导致主机不必要的空闲。
 
 const std::vector<const char*> validationLayers = {
 	"VK_LAYER_KHRONOS_validation"
@@ -94,10 +95,11 @@ private:
 	VkPipeline graphicsPipeline;//管线
 	std::vector<VkFramebuffer> swapChainFramebuffers;
 	VkCommandPool commandPool;//命令池，管理内存分配和命令缓冲区的生命周期
-	VkCommandBuffer commandBuffer;//命令缓冲区，记录要提交给图形队列的渲染命令
-	VkSemaphore imageAvailableSemaphore;//两个信号量和一个栅栏
-	VkSemaphore renderFinishedSemaphore;
-	VkFence inFlightFence;
+	std::vector<VkCommandBuffer> commandBuffers;//命令缓冲区，记录要提交给图形队列的渲染命令
+	std::vector<VkSemaphore> imageAvailableSemaphores;//两个信号量和一个栅栏
+	std::vector<VkSemaphore> renderFinishedSemaphores;
+	std::vector<VkFence> inFlightFences;//以上做成向量是为了同时处理多帧
+	uint32_t currentFrame = 0;//记录是两帧里的哪一帧
 	void initWindow() {
 		glfwInit();
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -126,9 +128,11 @@ private:
 		}
 	}
 	void cleanUp() {
-		vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
-		vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
-		vkDestroyFence(device, inFlightFence, nullptr);
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+			vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
+			vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
+			vkDestroyFence(device, inFlightFences[i], nullptr);
+		}
 		vkDestroyCommandPool(device, commandPool, nullptr);
 		for (auto framebuffer : swapChainFramebuffers) {
 			vkDestroyFramebuffer(device, framebuffer, nullptr);
@@ -672,13 +676,14 @@ private:
 		}
 	}
 	void createCommandBuffer() {//创建命令缓冲区
+		commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
 		VkCommandBufferAllocateInfo allocInfo{};
 		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 		allocInfo.commandPool = commandPool;//指定要分配的命令池
 		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;//指定是主命令缓冲区还是辅助命令缓冲区。此处为主~，可以提交到队列以执行，但不能从其他命令缓冲区调用。
-		allocInfo.commandBufferCount = 1;//指定缓冲区数量
+		allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();//指定缓冲区数量
 
-		if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS) {
+		if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
 			throw std::runtime_error("failed to allocate command buffers!");
 		}
 	}
@@ -728,15 +733,24 @@ private:
 	//绘制相关
 	void createSyncObjects() {//创建同步对象
 		//vulkan默认异步；交换链和帧操作需要同步，因为有执行顺序。信号量和栅栏是两种不同的同步对象，信号量用于GPU的同步，而栅栏用于GPU和CPU的同步，分别用于交换链和帧操作
+		imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+		renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+		inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+
 		VkSemaphoreCreateInfo semaphoreInfo{};
 		semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
 		VkFenceCreateInfo fenceInfo{};
 		fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 		fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;//为了第一帧不等待完成信号直接开始，将栅栏设置为“已发出信号”
-		if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS ||
-			vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS ||
-			vkCreateFence(device, &fenceInfo, nullptr, &inFlightFence) != VK_SUCCESS) {
-			throw std::runtime_error("failed to create semaphores!");
+
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+			if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
+				vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
+				vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
+
+				throw std::runtime_error("failed to create synchronization objects for a frame!");
+			}
 		}
 	}
 	void drawFrame() {
@@ -753,27 +767,28 @@ private:
 
 		可以看出他们是有顺序的
 		*/
-		vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);//等待前一帧完成//3rd参数，等待所有栅栏返回；4th参数，超时时间，此处禁用超时
+		vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);//等待前一帧完成//3rd参数，等待所有栅栏返回；4th参数，超时时间，此处禁用超时
+		vkResetFences(device, 1, &inFlightFences[currentFrame]);
 		//从交换链获取图像
 		uint32_t imageIndex;
-		vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);//禁用超时，选择完成后发出的信号量，已变为可用的交换链图像索引
+		vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);//禁用超时，选择完成后发出的信号量，已变为可用的交换链图像索引
 
-		vkResetCommandBuffer(commandBuffer, 0);//初始化命令缓冲区
-		recordCommandBuffer(commandBuffer, imageIndex);//记录命令缓冲区
+		vkResetCommandBuffer(commandBuffers[currentFrame], 0);//初始化命令缓冲区
+		recordCommandBuffer(commandBuffers[currentFrame], imageIndex);//记录命令缓冲区
 		//提交命令缓冲区
 		VkSubmitInfo submitInfo{};
 		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-		VkSemaphore waitSemaphores[] = { imageAvailableSemaphore };//等待哪些信号量
+		VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame] };//等待哪些信号量
 		VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };//在管道哪个阶段等待，此处为颜色附件输出阶段，因为我们需要在这个阶段之前等待图像可用
 		submitInfo.waitSemaphoreCount = 1;
 		submitInfo.pWaitSemaphores = waitSemaphores;
 		submitInfo.pWaitDstStageMask = waitStages;
 		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &commandBuffer;//实际提交执行的命令缓冲区
-		VkSemaphore signalSemaphores[] = { renderFinishedSemaphore };//执行完成发出的信号量
+		submitInfo.pCommandBuffers = &commandBuffers[currentFrame];//实际提交执行的命令缓冲区
+		VkSemaphore signalSemaphores[] = { renderFinishedSemaphores[currentFrame] };//执行完成发出的信号量
 		submitInfo.signalSemaphoreCount = 1;
 		submitInfo.pSignalSemaphores = signalSemaphores;
-		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence) != VK_SUCCESS) {//提交。last参数为执行完成触发的栅栏
+		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {//提交。last参数为执行完成触发的栅栏
 			throw std::runtime_error("failed to submit draw command buffer!");
 		}
 		//呈现
@@ -788,6 +803,8 @@ private:
 		presentInfo.pImageIndices = &imageIndex;
 		presentInfo.pResults = nullptr; // Optional 指定一个 VkResult 值数组，以检查每个单独的交换链演示是否成功。如果您只使用单个交换链，则没有必要
 		vkQueuePresentKHR(presentQueue, &presentInfo);//提交将图像呈现给交换链的请求
+
+		currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;//前进到下一帧
 	}
 
 	//验证层相关
