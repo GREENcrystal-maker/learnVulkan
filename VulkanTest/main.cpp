@@ -100,11 +100,18 @@ private:
 	std::vector<VkSemaphore> renderFinishedSemaphores;
 	std::vector<VkFence> inFlightFences;//以上做成向量是为了同时处理多帧
 	uint32_t currentFrame = 0;//记录是两帧里的哪一帧
+	bool framebufferResized = false;//记录窗口大小是否发生变化
 	void initWindow() {
 		glfwInit();
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+
 		window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+		glfwSetWindowUserPointer(window, this);//为glfw存储this指针，以资使用
+		glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);//窗口大小变化时，会调用2nd参数的函数
+	}
+	static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {//static因为glfw没有this指针概念
+		auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));//相当于得到了this指针
+		app->framebufferResized = true;
 	}
 	void initVulkan() {
 		createInstance();
@@ -127,31 +134,38 @@ private:
 			drawFrame();
 		}
 	}
+	void cleanupSwapChain() {//清理交换链
+		for (auto framebuffer : swapChainFramebuffers) {
+			vkDestroyFramebuffer(device, framebuffer, nullptr);
+		}
+
+		for (auto imageView : swapChainImageViews) {
+			vkDestroyImageView(device, imageView, nullptr);
+		}
+
+		vkDestroySwapchainKHR(device, swapChain, nullptr);
+	}
 	void cleanUp() {
+		cleanupSwapChain();
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 			vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
 			vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
 			vkDestroyFence(device, inFlightFences[i], nullptr);
 		}
 		vkDestroyCommandPool(device, commandPool, nullptr);
-		for (auto framebuffer : swapChainFramebuffers) {
-			vkDestroyFramebuffer(device, framebuffer, nullptr);
-		}
+
 		vkDestroyPipeline(device, graphicsPipeline, nullptr);
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		vkDestroyRenderPass(device, renderPass, nullptr);
-		for (auto imageView : swapChainImageViews) {
-			vkDestroyImageView(device, imageView, nullptr);
-		}
-		vkDestroySwapchainKHR(device, swapChain, nullptr);
-		if (enableValidationLayers) {
-			DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
-		}
+
 		vkDestroySurfaceKHR(instance, surface, nullptr);//确保在实例之前销毁表面
 		vkDestroyInstance(instance, nullptr);
+
+		vkDestroyDevice(device, nullptr);//销毁逻辑设备
+
 		glfwDestroyWindow(window);
 		glfwTerminate();
-		vkDestroyDevice(device, nullptr);//销毁逻辑设备
+
 	}
 	void createInstance() {
 		if (enableValidationLayers && !checkValidationLayerSupport()) {
@@ -441,6 +455,25 @@ private:
 				throw std::runtime_error("failed to create image views!");
 			}
 		}
+	}
+
+	void recreateSwapChain() {//重新创建交换链
+		//用于窗口大小发生变化，导致原交换链失效时，根据新大小重新创建
+		int width = 0, height = 0;//处理最小化窗口情况，此时交换链失效且无需呈现，故暂停程序而不是新建交换链
+		glfwGetFramebufferSize(window, &width, &height);
+		while (width == 0 || height == 0) {
+			glfwGetFramebufferSize(window, &width, &height);
+			glfwWaitEvents();
+		}
+
+		vkDeviceWaitIdle(device);
+
+		cleanupSwapChain();//清理失效交换链
+
+		createSwapChain();
+		createImageViews();
+		createFramebuffers();
+		//可选：渲染通道重新创建。仅部分情况下需要。
 	}
 
 	//图形管线相关
@@ -768,9 +801,23 @@ private:
 		可以看出他们是有顺序的
 		*/
 		vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);//等待前一帧完成//3rd参数，等待所有栅栏返回；4th参数，超时时间，此处禁用超时
-		vkResetFences(device, 1, &inFlightFences[currentFrame]);
-		//从交换链获取图像
+		
 		uint32_t imageIndex;
+		//呈现前交换链失效时（窗口大小变化），重新创建交换链
+		VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);//得到交换链是否不再足够的的信息
+		if (result == VK_ERROR_OUT_OF_DATE_KHR) {//交换链已与表面不兼容，无法再用于渲染。通常在窗口调整大小后发生。
+			framebufferResized = false;
+			recreateSwapChain();
+			return;
+		}
+		else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {//正常呈现 或 交换链仍然可以成功呈现到表面，但表面属性不再完全匹配：则不做处理。不在这三种中，报错。
+			throw std::runtime_error("failed to acquire swap chain image!");
+		}		
+
+
+		vkResetFences(device, 1, &inFlightFences[currentFrame]);//重置栅栏，为下一帧做准备//以上重建交换链是没有提交呈现的，所以不重置栅栏，否则因没有提交工作进行执行，重置后的栅栏永远不会被触发，导致永远锁死。因此需要在最后重置栅栏。确保在重建的return后。
+
+		//从交换链获取图像
 		vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);//禁用超时，选择完成后发出的信号量，已变为可用的交换链图像索引
 
 		vkResetCommandBuffer(commandBuffers[currentFrame], 0);//初始化命令缓冲区
@@ -802,7 +849,16 @@ private:
 		presentInfo.pSwapchains = swapChains;
 		presentInfo.pImageIndices = &imageIndex;
 		presentInfo.pResults = nullptr; // Optional 指定一个 VkResult 值数组，以检查每个单独的交换链演示是否成功。如果您只使用单个交换链，则没有必要
-		vkQueuePresentKHR(presentQueue, &presentInfo);//提交将图像呈现给交换链的请求
+		result=vkQueuePresentKHR(presentQueue, &presentInfo);//提交将图像呈现给交换链的请求
+
+
+		if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {//呈现后交换链是否失效
+			framebufferResized = false;
+			recreateSwapChain();
+		}
+		else if (result != VK_SUCCESS) {
+			throw std::runtime_error("failed to present swap chain image!");
+		}
 
 		currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;//前进到下一帧
 	}
