@@ -28,6 +28,5 @@
     </None>
     <None Include="shaders\frag.spv" />
     <None Include="shaders\vert.spv" />
-    <None Include="Makefile" />
   </ItemGroup>
 </Project>
