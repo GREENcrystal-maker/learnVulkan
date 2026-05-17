@@ -140,6 +140,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include=".gitignore" />
+    <None Include="Makefile" />
     <None Include="shaders\compile.bat" />
     <None Include="shaders\frag.spv" />
     <None Include="shaders\shader.frag" />
