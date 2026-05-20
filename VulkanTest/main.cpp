@@ -9,6 +9,10 @@
 #include <glm/glm.hpp>
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+#define TINYOBJLOADER_IMPLEMENTATION
+#include <tiny_obj_loader.h>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/hash.hpp>
 
 #include<iostream>
 #include <stdexcept>
@@ -24,11 +28,15 @@
 #include <array>
 #include <glm/gtc/matrix_transform.hpp>
 #include <chrono>//精确计时功能函数
+#include <unordered_map>
 
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 const int MAX_FRAMES_IN_FLIGHT = 2;//两个飞行中的帧，即允许一帧的渲染（gpu）不干扰下一帧的录制（cpu），而不是必须等待前一帧完成才能开始渲染下一帧，这会导致主机不必要的空闲。
+
+const std::string MODEL_PATH = "models/viking_room.obj";//模型和纹理的位置
+const std::string TEXTURE_PATH = "textures/viking_room.png";
 
 const std::vector<const char*> validationLayers = {
 	"VK_LAYER_KHRONOS_validation"
@@ -100,7 +108,18 @@ struct Vertex {
 		attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
 		return attributeDescriptions;
 	}
+	bool operator==(const Vertex& other) const {//重载相等运算，用于unoderedmap的比较键是否存在
+		return pos == other.pos && color == other.color && texCoord == other.texCoord;
+	}
 };
+namespace std {//为Vertex实现哈希函数，用于unoderedmap
+	template<> struct hash<Vertex> {
+		size_t operator()(Vertex const& vertex) const {
+			return ((hash<glm::vec3>()(vertex.pos) ^ (hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^ (hash<glm::vec2>()(vertex.texCoord) << 1);
+		}
+	};
+}
+/*
 const std::vector<Vertex> vertices = {
 	//{{位置}, {颜色}, {纹理坐标}}，位置是二维的，颜色是三维，纹理坐标是二维
 	{{ -0.5f, -0.5f, 0.0f }, {1.0f, 0.0f, 0.0f},{1.0f, 0.0f}},
@@ -113,11 +132,13 @@ const std::vector<Vertex> vertices = {
 	{{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
 	{{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
 };
+
 const std::vector<uint16_t> indices = {
 	//顶点索引
 	0, 1, 2, 2, 3, 0,
 	4, 5, 6, 6, 7, 4
 };
+*/
 struct UniformBufferObject {
 	//三个4*4矩阵，描述一个3d模型的显示到2d屏幕所需的所有信息
 	//物体的3d位置可以认为是(x,y,z,w)的四维列向量，w是1代表这是一个三维空间的点，当一个4*4矩阵乘它时，得到一个新的四维列向量，w仍然是1，前面三个分量是变换后的三维位置，所以这个矩阵所存储的就是变换（平移缩放旋转）信息，存储方式详见“资源”。于是我们用根据物体信息，摄像头信息创建出来这三个矩阵，用来记载这些信息要求的变换（平移缩放旋转），当他们依次乘上四维向量，就得到了2d显示所需的x，y，z（图层深度）。分成三个是因为要根据的信息被分成三块，分别为：物体3d模型样貌，摄像头摆放信息，摄像头视野性质。
@@ -126,6 +147,7 @@ struct UniformBufferObject {
 	alignas(16) glm::mat4 view;
 	alignas(16) glm::mat4 proj;
 };
+
 
 
 class HelloTriangleApplication {
@@ -164,6 +186,10 @@ private:
 	std::vector<VkFence> inFlightFences;//以上做成向量是为了同时处理多帧
 	uint32_t currentFrame = 0;//记录是两帧里的哪一帧
 	bool framebufferResized = false;//记录窗口大小是否发生变化
+
+	std::vector<Vertex> vertices;//作为private变量的顶点信息和顶点索引
+	std::vector<uint32_t> indices;//顶点个数多于65535时，需32位int
+
 	VkBuffer vertexBuffer;//顶点缓冲区句柄
 	VkDeviceMemory vertexBufferMemory;//区的内存	
 	VkBuffer indexBuffer;//索引缓冲区句柄
@@ -211,6 +237,7 @@ private:
 		createTextureImage();
 		createTextureImageView();
 		createTextureSampler();
+		loadModel();
 		createVertexBuffer();
 		createIndexBuffer();
 		createUniformBuffers();
@@ -226,6 +253,9 @@ private:
 		}
 	}
 	void cleanupSwapChain() {//清理交换链
+		vkDestroyImageView(device, depthImageView, nullptr);
+		vkDestroyImage(device, depthImage, nullptr);
+		vkFreeMemory(device, depthImageMemory, nullptr);
 		for (auto framebuffer : swapChainFramebuffers) {
 			vkDestroyFramebuffer(device, framebuffer, nullptr);
 		}
@@ -593,6 +623,7 @@ private:
 
 		createSwapChain();
 		createImageViews();
+		createDepthResources();//根据新的宽高数据重建深度缓冲，以匹配新的颜色附件分辨率
 		createFramebuffers();
 		//可选：渲染通道重新创建。仅部分情况下需要。
 	}
@@ -937,7 +968,7 @@ private:
 
 	void createTextureImage() {//加载图像并将其上传到 Vulkan 图像对象中，使用命令缓冲实现
 		int texWidth, texHeight, texChannels;//将图像转化为像素数组作为待处理数据
-		stbi_uc* pixels = stbi_load("textures/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);//返回的指针是像素值数组中的第一个元素//last参：即使图像没有 alpha 通道，STBI_rgb_alpha 值也会强制加载带有 alpha 通道的图像
+		stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);//返回的指针是像素值数组中的第一个元素//last参：即使图像没有 alpha 通道，STBI_rgb_alpha 值也会强制加载带有 alpha 通道的图像
 		VkDeviceSize imageSize = texWidth * texHeight * 4;//像素逐行排列，每个像素 4 个字节，总共 texWidth * texHeight * 4 个值。
 
 		if (!pixels) {
@@ -1132,6 +1163,46 @@ private:
 	}
 	bool hasStencilComponent(VkFormat format) {
 		return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
+	}
+
+	//模型加载相关
+	void loadModel() {
+		//OBJ 文件由位置、法线、纹理坐标和面组成。面由任意数量的顶点组成，其中每个顶点通过索引引用位置、法线和 / 或纹理坐标
+		tinyobj::attrib_t attrib;//该容器拥有位置、法线和纹理坐标的原始信息
+		std::vector<tinyobj::shape_t> shapes;//每个shape_t代表模型的一个子部分，通过mesh成员存储其网格，存储形式是，mesh有一个索引数组，指向attrib里与此部分有关的信息
+		std::vector<tinyobj::material_t> materials;
+		std::string warn, err;
+
+		if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str())) {
+			throw std::runtime_error(warn + err);
+		}
+		std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+		for (const auto& shape : shapes) {//遍历来把所有面组合成一个模型
+			for (const auto& index : shape.mesh.indices) {
+				Vertex vertex{};
+				vertex.pos = { //attrib.vertices是所有顶点坐标值组成的一个一维数组，即[x1,y1,z1,x2,y2,...]所以得到xi的i时，要乘3来寻址
+					attrib.vertices[3 * index.vertex_index + 0],
+					attrib.vertices[3 * index.vertex_index + 1],
+					attrib.vertices[3 * index.vertex_index + 2]
+				};
+
+				vertex.texCoord = {//同理，[u1,v1,u2,v2,u3...]的寻址
+					attrib.texcoords[2 * index.texcoord_index + 0],
+					1.0f-attrib.texcoords[2 * index.texcoord_index + 1]//vulkan读图y轴以顶部为0，obj格式以底部为0，需翻转
+				};
+
+				vertex.color = { 1.0f, 1.0f, 1.0f };
+
+				//vertices.push_back(vertex);
+				//indices.push_back(indices.size());//当前顶点下标是已记录顶点数，所以这样获得下标//每个三角形重复使用的顶点会出现多次
+				if (uniqueVertices.count(vertex) == 0) {//只有未出现过的才记录，这样索引缓冲区才有用
+					uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
+					vertices.push_back(vertex);
+				}
+				indices.push_back(uniqueVertices[vertex]);
+
+			}
+		}
 	}
 
 	//图形管线相关
@@ -1434,7 +1505,7 @@ private:
 		VkBuffer vertexBuffers[] = { vertexBuffer };//顶点缓冲区绑定到点，可以有多个
 		VkDeviceSize offsets[] = { 0 };
 		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-		vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);//绑定索引缓冲区，区别是只能有一个
+		vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);//绑定索引缓冲区，区别是只能有一个
 		
 		
 		//指定为动态状态的，在此处发出绘制命令之前，指定具体值。这些值设置到命令缓冲区。
