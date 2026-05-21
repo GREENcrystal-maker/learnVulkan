@@ -159,6 +159,7 @@ private:
 	VkDescriptorPool descriptorPool;//描述符池，管理描述符集的内存分配
 	std::vector<VkDescriptorSet> descriptorSets;//描述符集，描述符的集合，每帧分配一个，存储在向量中
 	float rotateAngle = 0.0f;
+	float lastTime = 0.0f;
 	void initWindow() {
 		glfwInit();
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -694,7 +695,7 @@ private:
 		processInput(window);
 		UniformBufferObject ubo{};//以下计算出下一帧该有的2d坐标，并存储在ubo结构体中，传递给顶点着色器进行变换
 		//模型转换，描述模型每帧进行的变化，即把以3d的物体局部坐标（及其变化）投射到世界坐标
-		ubo.model = glm::rotate(glm::mat4(1.0f), rotateAngle, glm::vec3(0.0f, 0.0f, 1.0f));//参数：开始变换的初始矩阵、旋转角度、旋转轴。此处：单位矩阵作为基础样貌，旋转角度为每过了一秒增加九十度，即每秒旋转九十度；旋转轴为z轴
+		ubo.model = glm::rotate(glm::mat4(1.0f), rotateAngle, glm::vec3(0.0f, 1.0f, 0.0f));//参数：开始变换的初始矩阵、旋转角度、旋转轴。此处：单位矩阵作为基础样貌，旋转角度为每过了一秒增加九十度，即每秒旋转九十度；旋转轴为z轴
 		//视图转换，指定怎么从3d世界坐标转换到摄像头画面的2d坐标，根据是摄像头摆放情况
 		ubo.view = glm::lookAt(glm::vec3(0, 0, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0));//参数：眼睛（摄像头）位置、观察中心位置、向上轴。向上轴是一个方向向量，指示摄像头的正上为哪个方向。此处：相当于上方以 45 度角查看几何体
 		//投影转换，指定观察者需要的物体远近透视、生成比例，以明确物体各世界坐标应该怎样投射到2d，根据是摄像头的视野情况
@@ -752,13 +753,15 @@ private:
 	void processInput(GLFWwindow* window) {
 		static auto startTime = std::chrono::high_resolution_clock::now();
 		auto currentTime = std::chrono::high_resolution_clock::now();
-		float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();//自渲染开始以来以秒为单位的时间（具有float精度）。
-		float rotationSpeed = 1.5f;
+		float newTime = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();//自渲染开始以来以秒为单位的时间（具有float精度）。
+		float deltaTime=newTime-lastTime;
+		lastTime=newTime;
+		float rotationSpeed = 0.5f;
 		if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-			rotateAngle += rotationSpeed; // 按A向左（逆时针）旋转
+			rotateAngle += rotationSpeed*deltaTime; // 按A向左（逆时针）旋转
 		}
 		if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-			rotateAngle -= rotationSpeed; // 按D向右（顺时针）旋转
+			rotateAngle -= rotationSpeed*deltaTime; // 按D向右（顺时针）旋转
 		}
 	}
 
@@ -847,7 +850,7 @@ private:
 		rasterizer.rasterizerDiscardEnable = VK_FALSE;//是否丢弃所有图元，直接跳过光栅化阶段
 		rasterizer.polygonMode = VK_POLYGON_MODE_FILL;//确定如何为几何图形生成片段，此处用片段填充多边形的区域
 		rasterizer.lineWidth = 1.0f;//以片段数量描述线条的粗细
-		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;//面剔除类型。可以禁用剔除，剔除正面、剔除背面或两者都剔除。此处剔除背面
+		rasterizer.cullMode = VK_CULL_MODE_NONE;//面剔除类型。可以禁用剔除，剔除正面、剔除背面或两者都剔除。此处剔除背面
 		rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;//指定被认为是正面的面的顶点顺序，可以是顺时针或逆时针。
 
 		VkPipelineMultisampleStateCreateInfo multisampling{};//多重采样，这是执行抗锯齿的方法之一
