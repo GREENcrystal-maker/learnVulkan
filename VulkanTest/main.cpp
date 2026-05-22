@@ -101,17 +101,17 @@ const std::vector<Vertex> vertices = {
 	{{-0.25f , 0.25f}, {0.0f, 0.0f, 1.0f}},
 	{{-0.75f , 0.25f}, {1.0f, 1.0f, 1.0f}},
 
-	{{ 0.75f, -0.25f }, {1.0f, 0.0f, 0.0f}},
-	{{0.25f , -0.25f}, {0.0f, 1.0f, 0.0f}},
-	{{0.25f , 0.25f}, {0.0f, 0.0f, 1.0f}},
-	{{0.75f , 0.25f}, {1.0f, 1.0f, 1.0f}}
+	{{ 0.25f, -0.25f }, {1.0f, 0.0f, 0.0f}},
+	{{0.75f , -0.25f}, {0.0f, 1.0f, 0.0f}},
+	{{0.75f , 0.25f}, {0.0f, 0.0f, 1.0f}},
+	{{0.25f , 0.25f}, {1.0f, 1.0f, 1.0f}}
 
 
 };
 const std::vector<uint16_t> indices = {
 	//顶点索引
 	0, 1, 2, 2, 3, 0,
-	4, 5, 6, 6, 7, 4
+	4,5,6,6,7,4
 
 };
 struct UniformBufferObject {
@@ -719,7 +719,7 @@ private:
 		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);//参数：zoom，画面比例，近裁剪面和远裁剪面。zoom决定了虚拟摄像机镜头的“张开程度”，可以把它完全等同于现实相机的镜头焦距，裁剪面规定了距离镜头距离多少范围可被显示，要够大。此处：一般使用的45度适中zoom，用交换链图像大小作为看东西视口的大小
 		ubo.proj[1][1] *= -1;//GLM 以 OpenGL 的方式处理坐标，vulkan的y轴是反的，所以需要翻转y轴
 		//三个函数都是生成4*4矩阵存储在ubo结构体中
-		uint32_t bufferIndex = currentImage * 2 + sign;
+		uint32_t bufferIndex = currentImage * ITEM_COUNT + sign;
 		memcpy(uniformBuffersMapped[bufferIndex], &ubo, sizeof(ubo));//数据复制到当前统一缓冲区，与我们对顶点缓冲区所做的操作完全相同，只是没有临时缓冲区
 	}
 	void createDescriptorPool() {//创建命令符池
@@ -1081,13 +1081,13 @@ private:
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
 		updateUniformBuffer(currentFrame, 0);
-		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame * 2], 0, nullptr);
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame * ITEM_COUNT], 0, nullptr);
 		vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size() / 2), 1, 0, 0, 0);
 
 
 
 		updateUniformBuffer(currentFrame, 1);
-		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame * 2 + 1], 0, nullptr);
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame * ITEM_COUNT + 1], 0, nullptr);
 		vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size() / 2), 1, 0, 4, 0);
 
 
