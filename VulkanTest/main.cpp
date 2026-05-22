@@ -26,6 +26,7 @@
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 const int MAX_FRAMES_IN_FLIGHT = 2;//两个飞行中的帧，即允许一帧的渲染（gpu）不干扰下一帧的录制（cpu），而不是必须等待前一帧完成才能开始渲染下一帧，这会导致主机不必要的空闲。
+const int ITEM_COUNT = 2;
 
 const std::vector<const char*> validationLayers = {
 	"VK_LAYER_KHRONOS_validation"
@@ -223,7 +224,7 @@ private:
 	void cleanUp() {
 		cleanupSwapChain();
 
-		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT*ITEM_COUNT; i++) {
 			vkDestroyBuffer(device, uniformBuffers[i], nullptr);
 			vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
 		}
@@ -690,11 +691,11 @@ private:
 		//统一缓冲区，用来存放cpu传给gpu的全局、动态数据，它们是cpu每帧需要动态计算和传递的，而不是顶点缓冲区那样写死的数据
 		VkDeviceSize bufferSize = sizeof(UniformBufferObject);
 
-		uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
-		uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
-		uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
+		uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT*ITEM_COUNT);
+		uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT * ITEM_COUNT);
+		uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT * ITEM_COUNT);
 
-		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT * ITEM_COUNT; i++) {
 			createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
 
 			vkMapMemory(device, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);//使用 vkMapMemory 在创建后立即映射缓冲区。不unmap，持续每帧更新指针数据
@@ -703,58 +704,52 @@ private:
 	void updateUniformBuffer(uint32_t currentImage,int sign) {//描述每帧进行的变换
 		//drawFrame 函数中提交下一帧之前添加对其的调用，更新uniform数据
 		processInput(window);
+		UniformBufferObject ubo{};//以下计算出下一帧该有的2d坐标，并存储在ubo结构体中，传递给顶点着色器进行变换
+		//模型转换，描述模型每帧进行的变化，即把以3d的物体局部坐标（及其变化）投射到世界坐标
 		if (sign == 0) {
-			UniformBufferObject ubo{};//以下计算出下一帧该有的2d坐标，并存储在ubo结构体中，传递给顶点着色器进行变换
-			//模型转换，描述模型每帧进行的变化，即把以3d的物体局部坐标（及其变化）投射到世界坐标
 			ubo.model = glm::rotate(glm::mat4(1.0f), rotateAngle, glm::vec3(0.0f, 1.0f, 0.0f));//参数：开始变换的初始矩阵、旋转角度、旋转轴。此处：单位矩阵作为基础样貌，旋转角度为每过了一秒增加九十度，即每秒旋转九十度；旋转轴为z轴
-			//视图转换，指定怎么从3d世界坐标转换到摄像头画面的2d坐标，根据是摄像头摆放情况
-			ubo.view = glm::lookAt(glm::vec3(0, 0, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.5f, 0));//参数：眼睛（摄像头）位置、观察中心位置、向上轴。向上轴是一个方向向量，指示摄像头的正上为哪个方向。此处：相当于上方以 45 度角查看几何体
-			//投影转换，指定观察者需要的物体远近透视、生成比例，以明确物体各世界坐标应该怎样投射到2d，根据是摄像头的视野情况
-			ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);//参数：zoom，画面比例，近裁剪面和远裁剪面。zoom决定了虚拟摄像机镜头的“张开程度”，可以把它完全等同于现实相机的镜头焦距，裁剪面规定了距离镜头距离多少范围可被显示，要够大。此处：一般使用的45度适中zoom，用交换链图像大小作为看东西视口的大小
-			ubo.proj[1][1] *= -1;//GLM 以 OpenGL 的方式处理坐标，vulkan的y轴是反的，所以需要翻转y轴
-			//三个函数都是生成4*4矩阵存储在ubo结构体中
-			memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));//数据复制到当前统一缓冲区，与我们对顶点缓冲区所做的操作完全相同，只是没有临时缓冲区
+
 		}
 		if (sign == 1) {
-			UniformBufferObject ubo2{};
-			ubo2.model = glm::rotate(glm::mat4(1.0f), rotateAngle2, glm::vec3(0.0f, 1.0f, 0.0f));//参数：开始变换的初始矩阵、旋转角度、旋转轴。此处：单位矩阵作为基础样貌，旋转角度为每过了一秒增加九十度，即每秒旋转九十度；旋转轴为z轴
-			//视图转换，指定怎么从3d世界坐标转换到摄像头画面的2d坐标，根据是摄像头摆放情况
-			ubo2.view = glm::lookAt(glm::vec3(0, 0, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.5f, 0));//参数：眼睛（摄像头）位置、观察中心位置、向上轴。向上轴是一个方向向量，指示摄像头的正上为哪个方向。此处：相当于上方以 45 度角查看几何体
-			//投影转换，指定观察者需要的物体远近透视、生成比例，以明确物体各世界坐标应该怎样投射到2d，根据是摄像头的视野情况
-			ubo2.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);//参数：zoom，画面比例，近裁剪面和远裁剪面。zoom决定了虚拟摄像机镜头的“张开程度”，可以把它完全等同于现实相机的镜头焦距，裁剪面规定了距离镜头距离多少范围可被显示，要够大。此处：一般使用的45度适中zoom，用交换链图像大小作为看东西视口的大小
-			ubo2.proj[1][1] *= -1;//GLM 以 OpenGL 的方式处理坐标，vulkan的y轴是反的，所以需要翻转y轴
-			//三个函数都是生成4*4矩阵存储在ubo结构体中
-			memcpy(uniformBuffersMapped[currentImage], &ubo2, sizeof(ubo2));//数据复制到当前统一缓冲区，与我们对顶点缓冲区所做的操作完全相同，只是没有临时缓冲区
+			ubo.model = glm::rotate(glm::mat4(1.0f), rotateAngle2, glm::vec3(0.0f, 1.0f, 0.0f));//参数：开始变换的初始矩阵、旋转角度、旋转轴。此处：单位矩阵作为基础样貌，旋转角度为每过了一秒增加九十度，即每秒旋转九十度；旋转轴为z轴
 		}
+		//视图转换，指定怎么从3d世界坐标转换到摄像头画面的2d坐标，根据是摄像头摆放情况
+		ubo.view = glm::lookAt(glm::vec3(0, 0, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.5f, 0));//参数：眼睛（摄像头）位置、观察中心位置、向上轴。向上轴是一个方向向量，指示摄像头的正上为哪个方向。此处：相当于上方以 45 度角查看几何体
+		//投影转换，指定观察者需要的物体远近透视、生成比例，以明确物体各世界坐标应该怎样投射到2d，根据是摄像头的视野情况
+		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);//参数：zoom，画面比例，近裁剪面和远裁剪面。zoom决定了虚拟摄像机镜头的“张开程度”，可以把它完全等同于现实相机的镜头焦距，裁剪面规定了距离镜头距离多少范围可被显示，要够大。此处：一般使用的45度适中zoom，用交换链图像大小作为看东西视口的大小
+		ubo.proj[1][1] *= -1;//GLM 以 OpenGL 的方式处理坐标，vulkan的y轴是反的，所以需要翻转y轴
+		//三个函数都是生成4*4矩阵存储在ubo结构体中
+		uint32_t bufferIndex = currentImage * 2 + sign;
+		memcpy(uniformBuffersMapped[bufferIndex], &ubo, sizeof(ubo));//数据复制到当前统一缓冲区，与我们对顶点缓冲区所做的操作完全相同，只是没有临时缓冲区
 	}
 	void createDescriptorPool() {//创建命令符池
 		VkDescriptorPoolSize poolSize{};//描述符池大小，指定了每种类型的描述符需要多少个
 		poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;//包含的描述符类型，此处为统一缓冲区
-		poolSize.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);//描述符数量，为每一帧分配一个描述符
+		poolSize.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT * ITEM_COUNT);//描述符数量，为每一帧分配一个描述符
 
 		VkDescriptorPoolCreateInfo poolInfo{};
 		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 		poolInfo.poolSizeCount = 1;//描述符池中不同类型的描述符数量，此处只有一种类型
 		poolInfo.pPoolSizes = &poolSize;//描述符池中每种类型的描述符数量，此处只有一种类型
-		poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);//描述符集的最大数量，为每一帧分配一个描述符集
+		poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT * ITEM_COUNT);//描述符集的最大数量，为每一帧分配一个描述符集
 		//flags是否可以释放单个描述符集，默认为0，不需要
 		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create descriptor pool!");
 		}
 	}
 	void createDescriptorSets() {//创建描述符集，必须像命令缓冲区一样从池中分配
-		std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayout);//每一帧一个描述符集，每个描述符集都使用相同的布局
+		std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT * ITEM_COUNT, descriptorSetLayout);//每一帧一个描述符集，每个描述符集都使用相同的布局
 		VkDescriptorSetAllocateInfo allocInfo{};
 		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
 		allocInfo.descriptorPool = descriptorPool;//指定描述符池
-		allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);//描述符集数量，为每一帧分配一个描述符集
+		allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT * ITEM_COUNT);//描述符集数量，为每一帧分配一个描述符集
 		allocInfo.pSetLayouts = layouts.data();//指定使用的描述符集布局
-		descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+		descriptorSets.resize(MAX_FRAMES_IN_FLIGHT * ITEM_COUNT);
 		if (vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()) != VK_SUCCESS) {
 			throw std::runtime_error("failed to allocate descriptor sets!");
 		}
 
-		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {//配置描述符
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT * ITEM_COUNT; i++) {//配置描述符
 			VkDescriptorBufferInfo bufferInfo{};//对引用缓冲区的描述符（此处为统一缓冲区的）用此结构体进行配置
 			bufferInfo.buffer = uniformBuffers[i];//指定缓冲区
 			bufferInfo.offset = 0;
@@ -785,6 +780,12 @@ private:
 		}
 		if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
 			rotateAngle -= rotationSpeed*deltaTime; // 按D向右（顺时针）旋转
+		}
+		if (glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS) {
+			rotateAngle2 += rotationSpeed * deltaTime; // 按A向左（逆时针）旋转
+		}
+		if (glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS) {
+			rotateAngle2 -= rotationSpeed * deltaTime; // 按D向右（顺时针）旋转
 		}
 	}
 
@@ -1079,14 +1080,17 @@ private:
 		scissor.extent = swapChainExtent;
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
+		updateUniformBuffer(currentFrame, 0);
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame * 2], 0, nullptr);
+		vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size() / 2), 1, 0, 0, 0);
 
-		
-		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);//将每一帧的正确描述符集绑定到着色器中的描述符//参数：将描述符集绑定到图形管线或计算管线，基于的布局，第一个描述符集的索引、要绑定的集合数量以及要绑定的集合数组，后两个用于动态偏移量
-		updateUniformBuffer(currentFrame,0);//一帧完成，更新统一缓冲区数据，为下一帧做准备
-		vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()/2), 1, 0, 0, 0);//绘制三角形命令//参数：顶点数量、索引缓冲区偏移量、实例数量、顶点偏移量、实例偏移量
-		updateUniformBuffer(currentFrame,1);//一帧完成，更新统一缓冲区数据，为下一帧做准备
+
+
+		updateUniformBuffer(currentFrame, 1);
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame * 2 + 1], 0, nullptr);
 		vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size() / 2), 1, 0, 4, 0);
-		vkCmdEndRenderPass(commandBuffer);//结束渲染通道
+
+
 		if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
 			throw std::runtime_error("failed to record command buffer!");
 		}
