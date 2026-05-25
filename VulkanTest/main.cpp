@@ -96,7 +96,7 @@ struct Vertex {
 	}
 };
 const std::vector<Vertex> vertices = {
-	//{{位置}, {颜色}}，位置是二维的，颜色是三维
+	//{{位置}, {颜色}}，位置是三维的，颜色是三维
 	{{ -0.75f, -0.25f ,0.0f}, {1.0f, 0.0f, 0.0f}},
 	{{-0.25f , -0.25f,0.0f}, {0.0f, 1.0f, 0.0f}},
 	{{-0.25f , 0.25f,0.0f}, {0.0f, 0.0f, 1.0f}},
@@ -172,9 +172,13 @@ private:
 	VkImage depthImage;//深度图像
 	VkDeviceMemory depthImageMemory;
 	VkImageView depthImageView;
-	float rotateAngle = 0.0f;
-	float rotateAngle2 = 0.0f;
+
+	std::vector<float> rotateAngle;
+	
 	float lastTime = 0.0f;
+	std::vector<float> scale;
+	std::vector<float> trans_z;
+	uint32_t modelChosen = 1;
 	void initWindow() {
 		glfwInit();
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -188,6 +192,7 @@ private:
 		app->framebufferResized = true;
 	}
 	void initVulkan() {
+		controllInit();
 		createInstance();
 		setupDebugMessenger();
 		createSurface();
@@ -715,13 +720,10 @@ private:
 		processInput(window);
 		UniformBufferObject ubo{};//以下计算出下一帧该有的2d坐标，并存储在ubo结构体中，传递给顶点着色器进行变换
 		//模型转换，描述模型每帧进行的变化，即把以3d的物体局部坐标（及其变化）投射到世界坐标
-		if (sign == 0) {
-			ubo.model = glm::rotate(glm::mat4(1.0f), rotateAngle, glm::vec3(0.0f, 1.0f, 0.0f));//参数：开始变换的初始矩阵、旋转角度、旋转轴。此处：单位矩阵作为基础样貌，旋转角度为每过了一秒增加九十度，即每秒旋转九十度；旋转轴为z轴
+		ubo.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, trans_z[sign])) *
+					glm::scale(glm::mat4(1.0f), glm::vec3(scale[sign], scale[sign], 1.0f)) *
+					glm::rotate(glm::mat4(1.0f), rotateAngle[sign], glm::vec3(0.0f, 1.0f, 0.0f));//参数：开始变换的初始矩阵、旋转角度、旋转轴。此处：单位矩阵作为基础样貌，旋转角度为每过了一秒增加九十度，即每秒旋转九十度；旋转轴为z轴
 
-		}
-		if (sign == 1) {
-			ubo.model = glm::rotate(glm::mat4(1.0f), rotateAngle2, glm::vec3(0.0f, 1.0f, 0.0f));//参数：开始变换的初始矩阵、旋转角度、旋转轴。此处：单位矩阵作为基础样貌，旋转角度为每过了一秒增加九十度，即每秒旋转九十度；旋转轴为z轴
-		}
 		//视图转换，指定怎么从3d世界坐标转换到摄像头画面的2d坐标，根据是摄像头摆放情况
 		ubo.view = glm::lookAt(glm::vec3(0, 0, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.5f, 0));//参数：眼睛（摄像头）位置、观察中心位置、向上轴。向上轴是一个方向向量，指示摄像头的正上为哪个方向。此处：相当于上方以 45 度角查看几何体
 		//投影转换，指定观察者需要的物体远近透视、生成比例，以明确物体各世界坐标应该怎样投射到2d，根据是摄像头的视野情况
@@ -778,7 +780,7 @@ private:
 	}
 
 	//深度缓冲相关
-	//以下两个函数来自master的纹理相关，是
+	//以下两个函数来自master的纹理相关
 	void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory) {
 		VkImageCreateInfo imageInfo{};
 		imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -868,6 +870,16 @@ private:
 
 
 	//键盘input进行旋转逻辑相关
+	void controllInit() {
+		rotateAngle.resize(ITEM_COUNT);
+		scale.resize(ITEM_COUNT);
+		trans_z.resize(ITEM_COUNT);
+		for (uint32_t i = 0; i < ITEM_COUNT; i++) {
+			rotateAngle[i] = 0.0f;
+			scale[i] = 1.0f;
+			trans_z[i] = 0.0f;
+		}
+	}
 	void processInput(GLFWwindow* window) {
 		static auto startTime = std::chrono::high_resolution_clock::now();
 		auto currentTime = std::chrono::high_resolution_clock::now();
@@ -875,17 +887,31 @@ private:
 		float deltaTime=newTime-lastTime;
 		lastTime=newTime;
 		float rotationSpeed = 0.5f;
+		float scaleSpeed = 0.5f;
+		float transSpeed = 0.5f;
 		if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-			rotateAngle += rotationSpeed*deltaTime; // 按A向左（逆时针）旋转
-		}
-		if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-			rotateAngle -= rotationSpeed*deltaTime; // 按D向右（顺时针）旋转
+			modelChosen = 0;
 		}
 		if (glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS) {
-			rotateAngle2 += rotationSpeed * deltaTime; // 按A向左（逆时针）旋转
+			modelChosen = 1;
 		}
-		if (glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS) {
-			rotateAngle2 -= rotationSpeed * deltaTime; // 按D向右（顺时针）旋转x
+		if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) {
+			rotateAngle[modelChosen] += rotationSpeed * deltaTime; // 按A向左（逆时针）旋转
+		}
+		if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
+			rotateAngle[modelChosen] -= rotationSpeed*deltaTime; // 按D向右（顺时针）旋转
+		}
+		if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+			scale[modelChosen] += scaleSpeed * deltaTime; // 按A向左（逆时针）旋转
+		}
+		if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+			scale[modelChosen] -= scaleSpeed * deltaTime;
+		}
+		if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS) {
+			trans_z[modelChosen] += transSpeed * deltaTime;
+		}
+		if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS) {
+			trans_z[modelChosen] -=  transSpeed* deltaTime;
 		}
 	}
 
