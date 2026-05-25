@@ -870,7 +870,7 @@ private:
 
 
 	//键盘input进行旋转逻辑相关
-	void controllInit() {
+	void controllInit() {//初始化位置数据
 		rotateAngle.resize(ITEM_COUNT);
 		scale.resize(ITEM_COUNT);
 		trans_z.resize(ITEM_COUNT);
@@ -885,32 +885,32 @@ private:
 		auto currentTime = std::chrono::high_resolution_clock::now();
 		float newTime = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();//自渲染开始以来以秒为单位的时间（具有float精度）。
 		float deltaTime=newTime-lastTime;
-		lastTime=newTime;
-		float rotationSpeed = 0.5f;
+		lastTime=newTime;//以上算出帧时间间隔，用于控制实际旋转速度与真实时间关系一致
+		float rotationSpeed = 0.5f;//速度
 		float scaleSpeed = 0.5f;
 		float transSpeed = 0.5f;
-		if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+		if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {//切换第一个物体
 			modelChosen = 0;
 		}
-		if (glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS) {
+		if (glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS) {//切换第二个物体
 			modelChosen = 1;
 		}
-		if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) {
-			rotateAngle[modelChosen] += rotationSpeed * deltaTime; // 按A向左（逆时针）旋转
-		}
 		if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
-			rotateAngle[modelChosen] -= rotationSpeed*deltaTime; // 按D向右（顺时针）旋转
+			rotateAngle[modelChosen] += rotationSpeed * deltaTime; // 向左（逆时针）旋转
 		}
-		if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-			scale[modelChosen] += scaleSpeed * deltaTime; // 按A向左（逆时针）旋转
+		if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) {
+			rotateAngle[modelChosen] -= rotationSpeed*deltaTime; // 向右（顺时针）旋转
 		}
-		if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+		if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {//放大正方形
+			scale[modelChosen] += scaleSpeed * deltaTime; 
+		}
+		if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {//缩小
 			scale[modelChosen] -= scaleSpeed * deltaTime;
 		}
-		if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS) {
+		if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS) {//z向前（深度变浅）
 			trans_z[modelChosen] += transSpeed * deltaTime;
 		}
-		if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS) {
+		if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS) {//z向后（变深）
 			trans_z[modelChosen] -=  transSpeed* deltaTime;
 		}
 	}
