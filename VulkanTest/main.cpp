@@ -36,8 +36,8 @@ const uint32_t HEIGHT = 600;
 const int MAX_FRAMES_IN_FLIGHT = 2;//两个飞行中的帧，即允许一帧的渲染（gpu）不干扰下一帧的录制（cpu），而不是必须等待前一帧完成才能开始渲染下一帧，这会导致主机不必要的空闲。
 const int ITEM_COUNT = 2;//物体数量
 
-const std::vector<std::string> MODEL_PATHS = {"models/sphere.obj", "models/bunny.obj"};//模型和纹理的位置
-const std::string TEXTURE_PATH = "textures/basketball.png";
+const std::vector<std::string> MODEL_PATHS = {"models/sphere.obj", "models/viking_room.obj"};//模型和纹理的位置
+const std::vector<std::string> TEXTURE_PATHS = { "textures/basketball.png" ,"textures/bunny.png"};
 
 const std::vector<const char*> validationLayers = {
 	"VK_LAYER_KHRONOS_validation"
@@ -846,7 +846,7 @@ private:
 			glm::rotate(glm::mat4(1.0f), rotateAngle[sign], glm::vec3(0.0f, 1.0f, 0.0f));//参数：开始变换的初始矩阵、旋转角度、旋转轴。此处：单位矩阵作为基础样貌，旋转角度为每过了一秒增加九十度，即每秒旋转九十度；旋转轴为z轴
 
 		//视图转换，指定怎么从3d世界坐标转换到摄像头画面的2d坐标，根据是摄像头摆放情况
-		ubo.view = glm::lookAt(glm::vec3(0, 0, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.5f, 0));//参数：眼睛（摄像头）位置、观察中心位置、向上轴。向上轴是一个方向向量，指示摄像头的正上为哪个方向。此处：相当于上方以 45 度角查看几何体
+		ubo.view = glm::lookAt(glm::vec3(0, 0, 10.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.5f, 0));//参数：眼睛（摄像头）位置、观察中心位置、向上轴。向上轴是一个方向向量，指示摄像头的正上为哪个方向。此处：相当于上方以 45 度角查看几何体
 		//投影转换，指定观察者需要的物体远近透视、生成比例，以明确物体各世界坐标应该怎样投射到2d，根据是摄像头的视野情况
 		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);//参数：zoom，画面比例，近裁剪面和远裁剪面。zoom决定了虚拟摄像机镜头的“张开程度”，可以把它完全等同于现实相机的镜头焦距，裁剪面规定了距离镜头距离多少范围可被显示，要够大。此处：一般使用的45度适中zoom，用交换链图像大小作为看东西视口的大小
 		ubo.proj[1][1] *= -1;//GLM 以 OpenGL 的方式处理坐标，vulkan的y轴是反的，所以需要翻转y轴
@@ -991,40 +991,33 @@ private:
 	}
 
 	void createTextureImage() {//加载图像并将其上传到 Vulkan 图像对象中，使用命令缓冲实现
-		textureImage.resize(MAX_FRAMES_IN_FLIGHT * ITEM_COUNT);
-		textureImageMemory.resize(MAX_FRAMES_IN_FLIGHT * ITEM_COUNT);
-		int texWidth, texHeight, texChannels;//将图像转化为像素数组作为待处理数据
-		stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);//返回的指针是像素值数组中的第一个元素//last参：即使图像没有 alpha 通道，STBI_rgb_alpha 值也会强制加载带有 alpha 通道的图像
-		VkDeviceSize imageSize = texWidth * texHeight * 4;//像素逐行排列，每个像素 4 个字节，总共 texWidth * texHeight * 4 个值。
+		textureImage.resize(ITEM_COUNT);
+		textureImageMemory.resize( ITEM_COUNT);
+		for (size_t i = 0; i < ITEM_COUNT; i++) {
+			int texWidth, texHeight, texChannels;//将图像转化为像素数组作为待处理数据
+			stbi_uc* pixels = stbi_load(TEXTURE_PATHS[i].c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+			VkDeviceSize imageSize = texWidth * texHeight * 4;
+			if (!pixels) {
+				throw std::runtime_error("failed to load texture image: " + TEXTURE_PATHS[i]);
+			}
+			VkBuffer stagingBuffer;//接下来将用类似顶点缓冲区的方式，将像素从cpu传至临时缓冲区，再从临时缓冲区传至gpu图像对象
+			VkDeviceMemory stagingBufferMemory;
+			createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+			void* data;
+			vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
+			memcpy(data, pixels, static_cast<size_t>(imageSize));
+			vkUnmapMemory(device, stagingBufferMemory);
+			stbi_image_free(pixels);//清理原始像素数组
 
-		if (!pixels) {
-			throw std::runtime_error("failed to load texture image!");
-		}
-
-		VkBuffer stagingBuffer;//接下来将用类似顶点缓冲区的方式，将像素从cpu传至临时缓冲区，再从临时缓冲区传至gpu图像对象
-		VkDeviceMemory stagingBufferMemory;
-		createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-		void* data;
-		vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
-		memcpy(data, pixels, static_cast<size_t>(imageSize));
-		vkUnmapMemory(device, stagingBufferMemory);
-		stbi_image_free(pixels);//清理原始像素数组
-		//创建一个图像对象
-		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT * ITEM_COUNT; i++) {
 			createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage[i], textureImageMemory[i]);
-		}
-			//复制数据
-
-
-		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT * ITEM_COUNT; i++) {
-			transitionImageLayout(textureImage[i], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);//将纹理图像布局转换为 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+				
+			transitionImageLayout(textureImage[i], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);//将纹 理图像布局转换为 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
 			copyBufferToImage(stagingBuffer, textureImage[i], static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
-
 			transitionImageLayout(textureImage[i], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);//布局转换为 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL，以便在着色器中采样
+				
+			vkDestroyBuffer(device, stagingBuffer, nullptr);//一定要在每次循环中清理，为下一张纹理使用临时缓冲区做准备
+			vkFreeMemory(device, stagingBufferMemory, nullptr);
 		}
-		//清理临时缓冲区
-		vkDestroyBuffer(device, stagingBuffer, nullptr);
-		vkFreeMemory(device, stagingBufferMemory, nullptr);
 	}
 	void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout) {//临时缓冲区传输数据到图像对象，要求图像处于正确的布局中，所以先处理布局转换
 		VkCommandBuffer commandBuffer = beginSingleTimeCommands();//开始单次使用的命令缓冲区
@@ -1115,7 +1108,7 @@ private:
 		}
 	}*/
 	VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags) {//单独的创建图像视图逻辑，用于交换链和纹理和深度缓冲的图像视图创建
-		textureImageView.resize(MAX_FRAMES_IN_FLIGHT * ITEM_COUNT);
+		textureImageView.resize(ITEM_COUNT);
 		VkImageViewCreateInfo viewInfo{};
 		viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 		viewInfo.image = image;
@@ -1135,7 +1128,7 @@ private:
 		return imageView;
 	}
 	void createTextureImageView() {
-		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT * ITEM_COUNT; i++) {
+		for (size_t i = 0; i <ITEM_COUNT; i++) {
 			textureImageView[i] = createImageView(textureImage[i], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 		}
 	}
@@ -1207,10 +1200,9 @@ private:
 		std::vector<tinyobj::shape_t> shapes;//每个shape_t代表模型的一个子部分，通过mesh成员存储其网格，存储形式是，mesh有一个索引数组，指向attrib里与此部分有关的信息
 		std::vector<tinyobj::material_t> materials;
 		std::string warn, err;
-		std::unordered_map<Vertex, uint32_t> uniqueVertices{};
 		for (uint32_t i = 0; i < ITEM_COUNT; i++) {
-
-			if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATHS[i].c_str())) {
+			std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+			if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATHS[i].c_str(), nullptr, true)) {
 				throw std::runtime_error(warn + err);
 			}
 			modelInfos[i].firstIndex = vertices.size();
@@ -1218,7 +1210,7 @@ private:
 				for (const auto& index : shape.mesh.indices) {
 					Vertex vertex{};
 					vertex.pos = { //attrib.vertices是所有顶点坐标值组成的一个一维数组，即[x1,y1,z1,x2,y2,...]所以得到xi的i时，要乘3来寻址
-						attrib.vertices[3 * index.vertex_index + 0] - 0.25+i*0.5,
+						attrib.vertices[3 * index.vertex_index + 0]-1.75+i*2.5,
 						attrib.vertices[3 * index.vertex_index + 1],
 						attrib.vertices[3 * index.vertex_index + 2]
 					};
