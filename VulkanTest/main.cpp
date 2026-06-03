@@ -37,7 +37,7 @@ const int MAX_FRAMES_IN_FLIGHT = 2;//两个飞行中的帧，即允许一帧的�
 const int ITEM_COUNT = 2;//物体数量
 
 const std::vector<std::string> MODEL_PATHS = {"models/bunny.obj", "models/sphere.obj"};//模型和纹理的位置
-const std::vector<std::string> TEXTURE_PATHS = { "textures/basketball.png" ,"textures/bunny.png"};
+const std::vector<std::string> TEXTURE_PATHS = { "textures/bunny.png","textures/basketball.png" };
 
 const std::vector<const char*> validationLayers = {
 	"VK_LAYER_KHRONOS_validation"
@@ -1130,8 +1130,8 @@ private:
 		return imageView;
 	}
 	void createTextureImageView() {
-		for (size_t i = 0; i <ITEM_COUNT; i++) {
-			textureImageView.resize(ITEM_COUNT);
+		textureImageView.resize(ITEM_COUNT);
+		for (size_t i = 0; i < ITEM_COUNT; i++) {
 			textureImageView[i] = createImageView(textureImage[i], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 		}
 	}
@@ -1603,13 +1603,13 @@ private:
 
 		updateUniformBuffer(currentFrame, 0);
 		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame * ITEM_COUNT], 0, nullptr);
-		vkCmdDrawIndexed(commandBuffer, modelInfos[0].indexCount, 1, modelInfos[0].firstIndex, modelInfos[0].vertexOffset,0);
+		vkCmdDrawIndexed(commandBuffer, modelInfos[0].indexCount, 1, modelInfos[0].firstIndex, 0, 0);
 
 
 
 		updateUniformBuffer(currentFrame, 1);
 		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame * ITEM_COUNT + 1], 0, nullptr);
-		vkCmdDrawIndexed(commandBuffer, modelInfos[1].indexCount, 1, modelInfos[1].firstIndex, modelInfos[1].vertexOffset, 0);
+		vkCmdDrawIndexed(commandBuffer, modelInfos[1].indexCount, 1, modelInfos[1].firstIndex, 0, 0);
 
 
 		if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
