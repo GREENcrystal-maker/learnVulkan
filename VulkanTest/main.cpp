@@ -155,6 +155,24 @@ const std::vector<uint16_t> indices = {
 	4, 5, 6, 6, 7, 4
 };
 */
+struct DirectionalLight {
+	alignas(16) glm::vec3 dir; // 指向光源的方向
+	alignas(16) glm::vec3 color;     // 光照颜色
+	alignas(16) glm::vec3 intensity; //强度
+};
+struct PointLight {
+	alignas(16) glm::vec3 pos;
+	alignas(16) glm::vec3 color;
+	alignas(16) glm::vec3 viewPos;
+	alignas(16) glm::vec2 args;//x=强度系数，y=最大作用距离
+	//alignas(16) glm::vec3 attenuationParams; // 衰减方程的系数，x=常数项的, y=线性~, z=二次方~ 只用1+d^2作分母所以不需要此项
+};
+struct SpotLight {
+	alignas(16) glm::vec3 pos;
+	alignas(16) glm::vec3 dir;
+	alignas(16) glm::vec3 color;
+	alignas(16) glm::vec4 args; // x=内圆锥角余弦值，y=外圆锥角余弦值，z=强度系数，w=最大作用距离
+};
 struct UniformBufferObject {
 	//三个4*4矩阵，描述一个3d模型的显示到2d屏幕所需的所有信息
 	//物体的3d位置可以认为是(x,y,z,w)的四维列向量，w是1代表这是一个三维空间的点，当一个4*4矩阵乘它时，得到一个新的四维列向量，w仍然是1，前面三个分量是变换后的三维位置，所以这个矩阵所存储的就是变换（平移缩放旋转）信息，存储方式详见“资源”。于是我们用根据物体信息，摄像头信息创建出来这三个矩阵，用来记载这些信息要求的变换（平移缩放旋转），当他们依次乘上四维向量，就得到了2d显示所需的x，y，z（图层深度）。分成三个是因为要根据的信息被分成三块，分别为：物体3d模型样貌，摄像头摆放信息，摄像头视野性质。
@@ -162,6 +180,14 @@ struct UniformBufferObject {
 	alignas(16) glm::mat4 model;
 	alignas(16) glm::mat4 view;
 	alignas(16) glm::mat4 proj;
+
+	alignas(16) DirectionalLight dirLights[1];   // 通常场景只有一个主方向光(太阳)
+	alignas(16) PointLight pointLights[2];       // 最多8个点光源
+	alignas(16) SpotLight spotLights[1];         // 最多4个聚光灯
+
+	alignas(16) glm::ivec3 lightCounts;          // x=dirCount, y=pointCount, z=spotCount
+	alignas(16) glm::vec4 ambientArgs; // xyz，w=rgb，强度
+	alignas(16) glm::vec2 strength;//x=漫反射强度系数，y=镜面反射强度系数,即公式的两个p幂
 };
 struct ModelInfo {// 记录每个模型的索引数量和起始偏移
 	uint32_t indexCount;
@@ -843,6 +869,26 @@ private:
 		//drawFrame 函数中提交下一帧之前添加对其的调用，更新uniform数据
 		processInput(window);
 		UniformBufferObject ubo{};//以下计算出下一帧该有的2d坐标，并存储在ubo结构体中，传递给顶点着色器进行变换
+
+		ubo.lightCounts = glm::ivec3(1, 2, 1);
+		ubo.dirLights[0].dir = glm::vec3(-1.0f, -1.0f, 0.0f);//光源方向，传递给片段着色器进行光照计算
+		ubo.dirLights[0].color = glm::vec3(1.0f, 1.0f, 1.0f);//光源颜色，传递给片段着色器进行光照计算
+		ubo.dirLights[0].intensity = glm::vec3(1.0f, 1.0f, 1.0f);
+
+
+		ubo.pointLights[0].pos = glm::vec3(0.0f, 0.0f, 10.0f);//光源位置，传递给片段着色器进行光照计算
+		ubo.pointLights[0].viewPos = glm::vec3(0.0f, 0.0f, 10.0f);
+		ubo.pointLights[0].color = glm::vec3(1.0f, 1.0f, 1.0f);//光源颜色，传递给片段着色器进行光照计算
+		ubo.pointLights[0].args = glm::vec3(1.0f, 1.0f, 1.0f);
+		ubo.pointLights[1].pos = glm::vec3(0.0f, 0.0f, 10.0f);//光源位置，传递给片段着色器进行光照计算
+		ubo.pointLights[1].viewPos = glm::vec3(0.0f, 0.0f, 10.0f);
+		ubo.pointLights[1].color = glm::vec3(1.0f, 1.0f, 1.0f);
+		ubo.pointLights[1].args = glm::vec3(1.0f, 1.0f, 1.0f);
+
+		ubo.spotLights[0].pos = glm::vec3(0.0f, 0.0f, 10.0f);//光源位置，传递给片段着色器进行光照计算
+		ubo.spotLights[0].dir = glm::vec3(0.0f, 0.0f, 10.0f);
+		ubo.spotLights[0].color = glm::vec3(0.0f, 0.0f, 10.0f);
+		ubo.spotLights[0].args = glm::vec4(0.0f, 0.0f, 10.0f, 1.0f);
 		//模型转换，描述模型每帧进行的变化，即把以3d的物体局部坐标（及其变化）投射到世界坐标
 		ubo.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, trans_z[sign])) *
 			glm::scale(glm::mat4(1.0f), glm::vec3(scale[sign], scale[sign], 1.0f)) *
