@@ -85,6 +85,7 @@ struct Vertex {
 	glm::vec3 pos;
 	glm::vec3 color;
 	glm::vec2 texCoord;//纹理的（u，v）
+	glm::vec3 normal;//法线向量
 	//描述如何将此数据传到内存后传递给顶点着色器，两种结构体
 	static VkVertexInputBindingDescription getBindingDescription() {//顶点绑定结构体
 		VkVertexInputBindingDescription bindingDescription{};//顶点数据都打包在一个向量里，所以只需一个绑定
@@ -93,8 +94,8 @@ struct Vertex {
 		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;//在每个顶点之后移动到下一个数据条目
 		return bindingDescription;
 	}
-	static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {//属性描述结构体
-		std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};//3指位置、颜色和纹理坐标
+	static std::array<VkVertexInputAttributeDescription, 4> getAttributeDescriptions() {//属性描述结构体
+		std::array<VkVertexInputAttributeDescription, 4> attributeDescriptions{};//4指位置、颜色、纹理坐标和法线
 		attributeDescriptions[0].binding = 0;//唯一的绑定
 		attributeDescriptions[0].location = 0;//索引
 		attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;//表示有三个32位浮点分量。个数用颜色格式，RGBA分别对应单值、vec2，vec3等，此处即vec3
@@ -107,6 +108,10 @@ struct Vertex {
 		attributeDescriptions[2].location = 2;
 		attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;//即vec2
 		attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
+		attributeDescriptions[3].binding = 0;
+		attributeDescriptions[3].location = 3;
+		attributeDescriptions[3].format = VK_FORMAT_R32G32B32_SFLOAT;//即vec3
+		attributeDescriptions[3].offset = offsetof(Vertex, normal);
 		return attributeDescriptions;
 	}
 	bool operator==(const Vertex& other) const {//重载相等运算，用于unoderedmap的比较键是否存在
@@ -158,12 +163,11 @@ const std::vector<uint16_t> indices = {
 struct DirectionalLight {
 	alignas(16) glm::vec3 dir; // 指向光源的方向
 	alignas(16) glm::vec3 color;     // 光照颜色
-	alignas(16) glm::vec3 intensity; //强度
+	alignas(16) float intensity; //强度
 };
 struct PointLight {
 	alignas(16) glm::vec3 pos;
 	alignas(16) glm::vec3 color;
-	alignas(16) glm::vec3 viewPos;
 	alignas(16) glm::vec2 args;//x=强度系数，y=最大作用距离
 	//alignas(16) glm::vec3 attenuationParams; // 衰减方程的系数，x=常数项的, y=线性~, z=二次方~ 只用1+d^2作分母所以不需要此项
 };
@@ -188,6 +192,8 @@ struct UniformBufferObject {
 	alignas(16) glm::ivec3 lightCounts;          // x=dirCount, y=pointCount, z=spotCount
 	alignas(16) glm::vec4 ambientArgs; // xyz，w=rgb，强度
 	alignas(16) glm::vec2 strength;//x=漫反射强度系数，y=镜面反射强度系数,即公式的两个p幂
+	alignas(16) glm::vec3 viewPos;//摄像机位置
+	alignas(16) glm::mat4 normalMatrix;//模型（model)矩阵左上角 3x3 部分的逆转置矩阵
 };
 struct ModelInfo {// 记录每个模型的索引数量和起始偏移
 	uint32_t indexCount;
@@ -873,15 +879,13 @@ private:
 		ubo.lightCounts = glm::ivec3(1, 2, 1);
 		ubo.dirLights[0].dir = glm::vec3(-1.0f, -1.0f, 0.0f);//光源方向，传递给片段着色器进行光照计算
 		ubo.dirLights[0].color = glm::vec3(1.0f, 1.0f, 1.0f);//光源颜色，传递给片段着色器进行光照计算
-		ubo.dirLights[0].intensity = glm::vec3(1.0f, 1.0f, 1.0f);
+		ubo.dirLights[0].intensity = 1.0;
 
 
 		ubo.pointLights[0].pos = glm::vec3(0.0f, 0.0f, 10.0f);//光源位置，传递给片段着色器进行光照计算
-		ubo.pointLights[0].viewPos = glm::vec3(0.0f, 0.0f, 10.0f);
 		ubo.pointLights[0].color = glm::vec3(1.0f, 1.0f, 1.0f);//光源颜色，传递给片段着色器进行光照计算
 		ubo.pointLights[0].args = glm::vec3(1.0f, 1.0f, 1.0f);
 		ubo.pointLights[1].pos = glm::vec3(0.0f, 0.0f, 10.0f);//光源位置，传递给片段着色器进行光照计算
-		ubo.pointLights[1].viewPos = glm::vec3(0.0f, 0.0f, 10.0f);
 		ubo.pointLights[1].color = glm::vec3(1.0f, 1.0f, 1.0f);
 		ubo.pointLights[1].args = glm::vec3(1.0f, 1.0f, 1.0f);
 
@@ -899,7 +903,9 @@ private:
 		//投影转换，指定观察者需要的物体远近透视、生成比例，以明确物体各世界坐标应该怎样投射到2d，根据是摄像头的视野情况
 		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);//参数：zoom，画面比例，近裁剪面和远裁剪面。zoom决定了虚拟摄像机镜头的“张开程度”，可以把它完全等同于现实相机的镜头焦距，裁剪面规定了距离镜头距离多少范围可被显示，要够大。此处：一般使用的45度适中zoom，用交换链图像大小作为看东西视口的大小
 		ubo.proj[1][1] *= -1;//GLM 以 OpenGL 的方式处理坐标，vulkan的y轴是反的，所以需要翻转y轴
-		//三个函数都是生成4*4矩阵存储在ubo结构体中
+
+		ubo.normalMatrix = glm::transpose(glm::inverse(glm::mat3(ubo.model)));
+		ubo.viewPos= glm::vec3(0.0f, 0.0f, 10.0f);
 		uint32_t bufferIndex = currentImage * ITEM_COUNT + sign;
 		memcpy(uniformBuffersMapped[bufferIndex], &ubo, sizeof(ubo));//数据复制到当前统一缓冲区，与我们对顶点缓冲区所做的操作完全相同，只是没有临时缓冲区
 	}
@@ -1271,6 +1277,12 @@ private:
 					};
 
 					vertex.color = { 1.0f, 1.0f, 1.0f };
+
+					vertex.normal = {//相同的一维存储方式
+						attrib.normals[3 * index.normal_index + 0],
+						attrib.normals[3 * index.normal_index + 1],
+						attrib.normals[3 * index.normal_index + 2]
+					};
 
 					//vertices.push_back(vertex);
 					//indices.push_back(indices.size());//当前顶点下标是已记录顶点数，所以这样获得下标//每个三角形重复使用的顶点会出现多次
