@@ -878,34 +878,35 @@ private:
 
 		ubo.lightCounts = glm::ivec3(1, 2, 1);
 		ubo.dirLights[0].dir = glm::vec3(-1.0f, -1.0f, 0.0f);//光源方向，传递给片段着色器进行光照计算
-		ubo.dirLights[0].color = glm::vec3(1.0f, 1.0f, 1.0f);//光源颜色，传递给片段着色器进行光照计算
+		ubo.dirLights[0].color = glm::vec3(1.0f, 1.0f, 0.0f);//光源颜色，传递给片段着色器进行光照计算
 		ubo.dirLights[0].intensity = 1.0;
 
 
-		ubo.pointLights[0].pos = glm::vec3(0.0f, 0.0f, 10.0f);//光源位置，传递给片段着色器进行光照计算
+		ubo.pointLights[0].pos = glm::vec3(1.0f, 0.0f, 10.0f);//光源位置，传递给片段着色器进行光照计算
 		ubo.pointLights[0].color = glm::vec3(1.0f, 1.0f, 1.0f);//光源颜色，传递给片段着色器进行光照计算
-		ubo.pointLights[0].args = glm::vec3(1.0f, 1.0f, 1.0f);
-		ubo.pointLights[1].pos = glm::vec3(0.0f, 0.0f, 10.0f);//光源位置，传递给片段着色器进行光照计算
+		ubo.pointLights[0].args = glm::vec2(1.0f, 30.0f);
+		ubo.pointLights[1].pos = glm::vec3(100.0f, 0.0f, 0.0f);//光源位置，传递给片段着色器进行光照计算
 		ubo.pointLights[1].color = glm::vec3(1.0f, 1.0f, 1.0f);
-		ubo.pointLights[1].args = glm::vec3(1.0f, 1.0f, 1.0f);
+		ubo.pointLights[1].args = glm::vec2(1.0f, 30.0f);
 
-		ubo.spotLights[0].pos = glm::vec3(0.0f, 0.0f, 10.0f);//光源位置，传递给片段着色器进行光照计算
+		ubo.spotLights[0].pos = glm::vec3(1.0f, 0.0f, 10.0f);//光源位置，传递给片段着色器进行光照计算
 		ubo.spotLights[0].dir = glm::vec3(0.0f, 0.0f, 10.0f);
-		ubo.spotLights[0].color = glm::vec3(0.0f, 0.0f, 10.0f);
-		ubo.spotLights[0].args = glm::vec4(0.0f, 0.0f, 10.0f, 1.0f);
+		ubo.spotLights[0].color = glm::vec3(0.0f, 0.0f, 1.0f);
+		ubo.spotLights[0].args = glm::vec4(0.96f, 0.86f, 1.0f, 30.0f);
+
+		ubo.viewPos = glm::vec3(0.0f, 0.0f, 10.0f);
 		//模型转换，描述模型每帧进行的变化，即把以3d的物体局部坐标（及其变化）投射到世界坐标
 		ubo.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, trans_z[sign])) *
 			glm::scale(glm::mat4(1.0f), glm::vec3(scale[sign], scale[sign], 1.0f)) *
 			glm::rotate(glm::mat4(1.0f), rotateAngle[sign], glm::vec3(0.0f, 1.0f, 0.0f));//参数：开始变换的初始矩阵、旋转角度、旋转轴。此处：单位矩阵作为基础样貌，旋转角度为每过了一秒增加九十度，即每秒旋转九十度；旋转轴为z轴
 
 		//视图转换，指定怎么从3d世界坐标转换到摄像头画面的2d坐标，根据是摄像头摆放情况
-		ubo.view = glm::lookAt(glm::vec3(0, 0, 10.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.5f, 0));//参数：眼睛（摄像头）位置、观察中心位置、向上轴。向上轴是一个方向向量，指示摄像头的正上为哪个方向。此处：相当于上方以 45 度角查看几何体
+		ubo.view = glm::lookAt(ubo.viewPos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.5f, 0));//参数：眼睛（摄像头）位置、观察中心位置、向上轴。向上轴是一个方向向量，指示摄像头的正上为哪个方向。此处：相当于上方以 45 度角查看几何体
 		//投影转换，指定观察者需要的物体远近透视、生成比例，以明确物体各世界坐标应该怎样投射到2d，根据是摄像头的视野情况
 		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);//参数：zoom，画面比例，近裁剪面和远裁剪面。zoom决定了虚拟摄像机镜头的“张开程度”，可以把它完全等同于现实相机的镜头焦距，裁剪面规定了距离镜头距离多少范围可被显示，要够大。此处：一般使用的45度适中zoom，用交换链图像大小作为看东西视口的大小
 		ubo.proj[1][1] *= -1;//GLM 以 OpenGL 的方式处理坐标，vulkan的y轴是反的，所以需要翻转y轴
 
 		ubo.normalMatrix = glm::transpose(glm::inverse(glm::mat3(ubo.model)));
-		ubo.viewPos= glm::vec3(0.0f, 0.0f, 10.0f);
 		uint32_t bufferIndex = currentImage * ITEM_COUNT + sign;
 		memcpy(uniformBuffersMapped[bufferIndex], &ubo, sizeof(ubo));//数据复制到当前统一缓冲区，与我们对顶点缓冲区所做的操作完全相同，只是没有临时缓冲区
 	}
