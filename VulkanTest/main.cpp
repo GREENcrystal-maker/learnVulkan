@@ -882,10 +882,10 @@ private:
 		ubo.dirLights[0].intensity = 1.0;
 
 
-		ubo.pointLights[0].pos = glm::vec3(1.0f, 0.0f, 10.0f);//光源位置，传递给片段着色器进行光照计算
+		ubo.pointLights[0].pos = glm::vec3(3.0f, 0.0f, 10.0f);//光源位置，传递给片段着色器进行光照计算
 		ubo.pointLights[0].color = glm::vec3(1.0f, 1.0f, 1.0f);//光源颜色，传递给片段着色器进行光照计算
 		ubo.pointLights[0].args = glm::vec2(1.0f, 30.0f);
-		ubo.pointLights[1].pos = glm::vec3(100.0f, 0.0f, 0.0f);//光源位置，传递给片段着色器进行光照计算
+		ubo.pointLights[1].pos = glm::vec3(3.0f, 0.0f, 0.0f);//光源位置，传递给片段着色器进行光照计算
 		ubo.pointLights[1].color = glm::vec3(1.0f, 1.0f, 1.0f);
 		ubo.pointLights[1].args = glm::vec2(1.0f, 30.0f);
 
@@ -895,6 +895,9 @@ private:
 		ubo.spotLights[0].args = glm::vec4(0.96f, 0.86f, 1.0f, 30.0f);
 
 		ubo.viewPos = glm::vec3(0.0f, 0.0f, 10.0f);
+		ubo.ambientArgs = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+		ubo.strength=glm::vec2(1.0f, 1.0f);
+
 		//模型转换，描述模型每帧进行的变化，即把以3d的物体局部坐标（及其变化）投射到世界坐标
 		ubo.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, trans_z[sign])) *
 			glm::scale(glm::mat4(1.0f), glm::vec3(scale[sign], scale[sign], 1.0f)) *

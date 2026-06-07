@@ -65,7 +65,7 @@ vec3 CalcSpotLight(SpotLight light, vec3 norm, vec3 viewDir,vec3 ambient,vec3 ma
     float epsilon = cutOff - outerCutOff;
     float intensity0 = clamp((costheta - outerCutOff) / epsilon, 0.0, 1.0);//包含了在内锥角里和外锥角外的情况
 
-    float intensity=light.args.x*(1/(1+distance*distance))*intensity0;
+    float intensity=light.args.z*(1/(1+distance*distance))*intensity0;
     return CalcBlinnPhong(norm, lightDir, viewDir, ambient, materialColor, light.color, intensity, strength.x, strength.y);
 }
 
