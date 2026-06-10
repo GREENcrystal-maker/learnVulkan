@@ -71,6 +71,7 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
 struct QueueFamilyIndices {//不同队列族序号变量组成的结构体.用optional包装int，好处是能使用undefined表示族不存在
 	std::optional<uint32_t> graphicsFamily;//图像渲染功能的队列族序号
 	std::optional<uint32_t> presentFamily;//窗口表面呈现能力的队列族序号
+	std::optional<uint32_t> graphicsAndComputeFamily;//同时支持图形和计算功能的队列族序号
 
 	bool isComplete() {//检查所需族是否存在
 		return graphicsFamily.has_value() && presentFamily.has_value();
@@ -164,18 +165,147 @@ struct DirectionalLight {
 	alignas(16) glm::vec3 dir; // 指向光源的方向
 	alignas(16) glm::vec3 color;     // 光照颜色
 	alignas(16) float intensity; //强度
+	static VkVertexInputBindingDescription getBindingDescription() {
+		VkVertexInputBindingDescription bindingDescription{};
+		bindingDescription.binding = 0;
+		bindingDescription.stride = sizeof(DirectionalLight);
+		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+		return bindingDescription;
+	}
+
+	static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
+		std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
+
+		attributeDescriptions[0].binding = 0;
+		attributeDescriptions[0].location = 0;
+		attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescriptions[0].offset = offsetof(DirectionalLight, dir);
+
+		attributeDescriptions[1].binding = 0;
+		attributeDescriptions[1].location = 1;
+		attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescriptions[1].offset = offsetof(DirectionalLight, color);
+
+		attributeDescriptions[2].binding = 0;
+		attributeDescriptions[2].location = 2;
+		attributeDescriptions[2].format = VK_FORMAT_R32_SFLOAT;
+		attributeDescriptions[2].offset = offsetof(DirectionalLight, intensity);
+
+		return attributeDescriptions;
+	}
 };
 struct PointLight {
 	alignas(16) glm::vec3 pos;
 	alignas(16) glm::vec3 color;
 	alignas(16) glm::vec2 args;//x=强度系数，y=最大作用距离
 	//alignas(16) glm::vec3 attenuationParams; // 衰减方程的系数，x=常数项的, y=线性~, z=二次方~ 只用1+d^2作分母所以不需要此项
+	static VkVertexInputBindingDescription getBindingDescription() {
+		VkVertexInputBindingDescription bindingDescription{};
+		bindingDescription.binding = 0;
+		bindingDescription.stride = sizeof(PointLight);
+		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+		return bindingDescription;
+	}
+	static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
+		std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
+
+		attributeDescriptions[0].binding = 0;
+		attributeDescriptions[0].location = 0;
+		attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescriptions[0].offset = offsetof(PointLight, pos);
+
+		attributeDescriptions[1].binding = 0;
+		attributeDescriptions[1].location = 1;
+		attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescriptions[1].offset = offsetof(PointLight, color);
+
+		attributeDescriptions[2].binding = 0;
+		attributeDescriptions[2].location = 2;
+		attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+		attributeDescriptions[2].offset = offsetof(PointLight, args);
+
+		return attributeDescriptions;
+	}
 };
 struct SpotLight {
 	alignas(16) glm::vec3 pos;
 	alignas(16) glm::vec3 dir;
 	alignas(16) glm::vec3 color;
 	alignas(16) glm::vec4 args; // x=内圆锥角余弦值，y=外圆锥角余弦值，z=强度系数，w=最大作用距离
+	static VkVertexInputBindingDescription getBindingDescription() {
+		VkVertexInputBindingDescription bindingDescription{};
+		bindingDescription.binding = 0;
+		bindingDescription.stride = sizeof(SpotLight);
+		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+		return bindingDescription;
+	}
+	static std::array<VkVertexInputAttributeDescription, 4> getAttributeDescriptions() {
+		std::array<VkVertexInputAttributeDescription, 4> attributeDescriptions{};
+
+		attributeDescriptions[0].binding = 0;
+		attributeDescriptions[0].location = 0;
+		attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescriptions[0].offset = offsetof(SpotLight, pos);
+
+		attributeDescriptions[1].binding = 0;
+		attributeDescriptions[1].location = 1;
+		attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescriptions[1].offset = offsetof(SpotLight, dir);
+
+		attributeDescriptions[2].binding = 0;
+		attributeDescriptions[2].location = 2;
+		attributeDescriptions[2].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescriptions[2].offset = offsetof(SpotLight, color);
+
+		attributeDescriptions[3].binding = 0;
+		attributeDescriptions[3].location = 3;
+		attributeDescriptions[3].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+		attributeDescriptions[3].offset = offsetof(SpotLight, args);
+
+		return attributeDescriptions;
+	}
+};
+struct LightInfo {
+	glm::ivec3 lightCounts;          // x=dirCount, y=pointCount, z=spotCount
+	glm::vec4 ambientArgs; // xyz，w=rgb，强度
+	glm::vec2 strength;//x=漫反射强度系数，y=镜面反射强度系数,即公式的两个p幂
+	glm::vec3 viewPos;
+	static VkVertexInputBindingDescription getBindingDescription() {
+		VkVertexInputBindingDescription bindingDescription{};
+		bindingDescription.binding = 0;
+		bindingDescription.stride = sizeof(LightInfo);
+		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+		return bindingDescription;
+	}
+	static std::array<VkVertexInputAttributeDescription, 4> getAttributeDescriptions() {
+		std::array<VkVertexInputAttributeDescription, 4> attributeDescriptions{};
+
+		attributeDescriptions[0].binding = 0;
+		attributeDescriptions[0].location = 0;
+		attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescriptions[0].offset = offsetof(LightInfo, lightCounts);
+
+		attributeDescriptions[1].binding = 0;
+		attributeDescriptions[1].location = 1;
+		attributeDescriptions[1].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+		attributeDescriptions[1].offset = offsetof(LightInfo, ambientArgs);
+
+		attributeDescriptions[2].binding = 0;
+		attributeDescriptions[2].location = 2;
+		attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+		attributeDescriptions[2].offset = offsetof(LightInfo, strength);
+
+		attributeDescriptions[3].binding = 0;
+		attributeDescriptions[3].location = 3;
+		attributeDescriptions[3].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescriptions[3].offset = offsetof(LightInfo, viewPos);
+
+		return attributeDescriptions;
+	}
 };
 struct UniformBufferObject {
 	//三个4*4矩阵，描述一个3d模型的显示到2d屏幕所需的所有信息
@@ -184,15 +314,6 @@ struct UniformBufferObject {
 	alignas(16) glm::mat4 model;
 	alignas(16) glm::mat4 view;
 	alignas(16) glm::mat4 proj;
-
-	alignas(16) DirectionalLight dirLights[1];   // 通常场景只有一个主方向光(太阳)
-	alignas(16) PointLight pointLights[2];       // 最多8个点光源
-	alignas(16) SpotLight spotLights[1];         // 最多4个聚光灯
-
-	alignas(16) glm::ivec3 lightCounts;          // x=dirCount, y=pointCount, z=spotCount
-	alignas(16) glm::vec4 ambientArgs; // xyz，w=rgb，强度
-	alignas(16) glm::vec2 strength;//x=漫反射强度系数，y=镜面反射强度系数,即公式的两个p幂
-	alignas(16) glm::vec3 viewPos;//摄像机位置
 	alignas(16) glm::mat4 normalMatrix;//模型（model)矩阵左上角 3x3 部分的逆转置矩阵
 };
 struct ModelInfo {// 记录每个模型的索引数量和起始偏移
@@ -265,6 +386,22 @@ private:
 	std::vector<float> trans_z;
 	uint32_t modelChosen = 1;
 	std::array<ModelInfo, 2> modelInfos;
+
+	VkQueue computeQueue;//计算缓冲区相关变量
+	VkDescriptorPool computeDescriptorPool;
+	VkDescriptorSetLayout computeDescriptorSetLayout;
+	VkPipelineLayout computePipelineLayout;
+	VkPipeline computePipeline;
+	std::vector<VkBuffer> shaderStorageBuffers;
+	std::vector<VkDeviceMemory> shaderStorageBuffersMemory;
+	std::vector<VkDescriptorSet> computeDescriptorSets;
+	std::vector<VkCommandBuffer> computeCommandBuffers;
+	std::vector<VkSemaphore> computeFinishedSemaphores;
+	std::vector<VkFence> computeInFlightFences;
+
+	std::vector<VkBuffer> outputShaderStorageBuffers;//这两个东西应该存计算着色器输出的ssbo，目前还没有分配内存，使用待补
+	std::vector<VkDeviceMemory> outputShaderStorageBuffersMemory; 
+
 	void initWindow() {
 		glfwInit();
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -288,10 +425,13 @@ private:
 		createImageViews();
 		createRenderPass();
 		createDescriptorSetLayout();
+		createComputeDescriptorSetLayout();
 		createGraphicsPipeline();
-		createCommandPool();
 		createDepthResources();
+		createComputePipeline();
 		createFramebuffers();
+		createCommandPool();
+		createShaderStorageBuffers();
 		createTextureImage();
 		createTextureImageView();
 		createTextureSampler();
@@ -301,6 +441,7 @@ private:
 		createUniformBuffers();
 		createDescriptorPool();
 		createDescriptorSets();
+		createComputeDescriptorPool();
 		createCommandBuffer();
 		createSyncObjects();
 	}
@@ -444,6 +585,9 @@ private:
 		for (const auto& queueFamily : queueFamilies) {//找到能提供所需功能的队列族序号
 			if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {//检查队列族图形能力
 				indices.graphicsFamily = i;
+			}
+			if ((queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) && (queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT)) {
+				indices.graphicsAndComputeFamily = i;
 			}
 
 			VkBool32 presentSupport = false;//检查队列族的窗口表面呈现能力
@@ -837,7 +981,7 @@ private:
 		uboLayoutBinding.binding = 0;
 		uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;//描述符类型，表示绑定资源的类型，此处为统一缓冲区
 		uboLayoutBinding.descriptorCount = 1;//描述符数量
-		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;//在哪些着色器阶段引用描述符，此处为顶点着色器
+		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT| VK_SHADER_STAGE_COMPUTE_BIT;;//UBO在顶点和片段着色器中都需要访问
 		uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
 		VkDescriptorSetLayoutBinding samplerLayoutBinding{};//采样器的绑定
 		samplerLayoutBinding.binding = 1;
@@ -876,27 +1020,6 @@ private:
 		processInput(window);
 		UniformBufferObject ubo{};//以下计算出下一帧该有的2d坐标，并存储在ubo结构体中，传递给顶点着色器进行变换
 
-		ubo.lightCounts = glm::ivec3(1, 2, 1);
-		ubo.dirLights[0].dir = glm::vec3(-1.0f, -1.0f, 0.0f);//光源方向，传递给片段着色器进行光照计算
-		ubo.dirLights[0].color = glm::vec3(1.0f, 1.0f, 0.0f);//光源颜色，传递给片段着色器进行光照计算
-		ubo.dirLights[0].intensity = 1.0;
-
-
-		ubo.pointLights[0].pos = glm::vec3(3.0f, 0.0f, 10.0f);//光源位置，传递给片段着色器进行光照计算
-		ubo.pointLights[0].color = glm::vec3(1.0f, 1.0f, 1.0f);//光源颜色，传递给片段着色器进行光照计算
-		ubo.pointLights[0].args = glm::vec2(1.0f, 30.0f);
-		ubo.pointLights[1].pos = glm::vec3(3.0f, 0.0f, 0.0f);//光源位置，传递给片段着色器进行光照计算
-		ubo.pointLights[1].color = glm::vec3(1.0f, 1.0f, 1.0f);
-		ubo.pointLights[1].args = glm::vec2(1.0f, 30.0f);
-
-		ubo.spotLights[0].pos = glm::vec3(1.0f, 0.0f, 10.0f);//光源位置，传递给片段着色器进行光照计算
-		ubo.spotLights[0].dir = glm::vec3(0.0f, 0.0f, 10.0f);
-		ubo.spotLights[0].color = glm::vec3(0.0f, 0.0f, 1.0f);
-		ubo.spotLights[0].args = glm::vec4(0.96f, 0.86f, 1.0f, 30.0f);
-
-		ubo.viewPos = glm::vec3(0.0f, 0.0f, 10.0f);
-		ubo.ambientArgs = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-		ubo.strength=glm::vec2(1.0f, 1.0f);
 
 		//模型转换，描述模型每帧进行的变化，即把以3d的物体局部坐标（及其变化）投射到世界坐标
 		ubo.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, trans_z[sign])) *
@@ -904,7 +1027,7 @@ private:
 			glm::rotate(glm::mat4(1.0f), rotateAngle[sign], glm::vec3(0.0f, 1.0f, 0.0f));//参数：开始变换的初始矩阵、旋转角度、旋转轴。此处：单位矩阵作为基础样貌，旋转角度为每过了一秒增加九十度，即每秒旋转九十度；旋转轴为z轴
 
 		//视图转换，指定怎么从3d世界坐标转换到摄像头画面的2d坐标，根据是摄像头摆放情况
-		ubo.view = glm::lookAt(ubo.viewPos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.5f, 0));//参数：眼睛（摄像头）位置、观察中心位置、向上轴。向上轴是一个方向向量，指示摄像头的正上为哪个方向。此处：相当于上方以 45 度角查看几何体
+		ubo.view = glm::lookAt(glm::vec3(0.0f, 0.0f, 10.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.5f, 0));//参数：眼睛（摄像头）位置、观察中心位置、向上轴。向上轴是一个方向向量，指示摄像头的正上为哪个方向。此处：相当于上方以 45 度角查看几何体
 		//投影转换，指定观察者需要的物体远近透视、生成比例，以明确物体各世界坐标应该怎样投射到2d，根据是摄像头的视野情况
 		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);//参数：zoom，画面比例，近裁剪面和远裁剪面。zoom决定了虚拟摄像机镜头的“张开程度”，可以把它完全等同于现实相机的镜头焦距，裁剪面规定了距离镜头距离多少范围可被显示，要够大。此处：一般使用的45度适中zoom，用交换链图像大小作为看东西视口的大小
 		ubo.proj[1][1] *= -1;//GLM 以 OpenGL 的方式处理坐标，vulkan的y轴是反的，所以需要翻转y轴
@@ -1346,6 +1469,246 @@ private:
 		}
 	}
 
+
+	//计算缓冲区相关
+
+	void createComputeDescriptorSetLayout() {
+		std::array<VkDescriptorSetLayoutBinding, 3> layoutBindings{};
+		layoutBindings[0].binding = 0;//ubo
+		layoutBindings[0].descriptorCount = 1;
+		layoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		layoutBindings[0].pImmutableSamplers = nullptr;
+		layoutBindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+		layoutBindings[1].binding = 1;//ssbo1
+		layoutBindings[1].descriptorCount = 1;
+		layoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		layoutBindings[1].pImmutableSamplers = nullptr;
+		layoutBindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+		layoutBindings[2].binding = 2;//ssbo2
+		layoutBindings[2].descriptorCount = 1;
+		layoutBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		layoutBindings[2].pImmutableSamplers = nullptr;
+		layoutBindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = 3;
+		layoutInfo.pBindings = layoutBindings.data();
+
+		if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &computeDescriptorSetLayout) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create compute descriptor set layout!");
+		}
+	}
+	void createComputePipeline() {
+		auto computeShaderCode = readFile("shaders/comp.spv");
+
+		VkShaderModule computeShaderModule = createShaderModule(computeShaderCode);
+
+		VkPipelineShaderStageCreateInfo computeShaderStageInfo{};
+		computeShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		computeShaderStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+		computeShaderStageInfo.module = computeShaderModule;
+		computeShaderStageInfo.pName = "main";
+
+		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		pipelineLayoutInfo.setLayoutCount = 1;
+		pipelineLayoutInfo.pSetLayouts = &computeDescriptorSetLayout;
+
+		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &computePipelineLayout) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create compute pipeline layout!");
+		}
+
+		VkComputePipelineCreateInfo pipelineInfo{};
+		pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+		pipelineInfo.layout = computePipelineLayout;
+		pipelineInfo.stage = computeShaderStageInfo;
+
+		if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &computePipeline) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create compute pipeline!");
+		}
+
+		vkDestroyShaderModule(device, computeShaderModule, nullptr);
+	}
+	void createShaderStorageBuffers() {//创建着色器存储缓冲区//使用着色器存储缓冲区将任意数据传递给计算着色器//过程：准备信息数据，传到临时缓冲区，再传到着色器存储缓冲区
+		std::vector<DirectionalLight> dirLights;   // 通常场景只有一个主方向光(太阳)
+		std::vector<PointLight> pointLights;       // 最多8个点光源
+		std::vector<SpotLight> spotLights;         // 最多4个聚光灯
+		LightInfo lightInfo;
+
+		lightInfo.lightCounts = glm::ivec3(1, 2, 1);
+		lightInfo.viewPos = glm::vec3(0.0f, 0.0f, 10.0f);
+		lightInfo.ambientArgs = glm::vec4(0.5f, 0.5f, 0.5f, 1.0f);
+		lightInfo.strength = glm::vec2(1.0f, 1.0f);
+
+		dirLights[0].dir = glm::vec3(-1.0f, -1.0f, 0.0f);//光源方向，传递给片段着色器进行光照计算
+		dirLights[0].color = glm::vec3(1.0f, 1.0f, 0.0f);//光源颜色，传递给片段着色器进行光照计算
+		dirLights[0].intensity = 1.0;
+
+
+		pointLights[0].pos = glm::vec3(3.0f, 0.0f, 10.0f);//光源位置，传递给片段着色器进行光照计算
+		pointLights[0].color = glm::vec3(1.0f, 1.0f, 1.0f);//光源颜色，传递给片段着色器进行光照计算
+		pointLights[0].args = glm::vec2(1.0f, 30.0f);
+		pointLights[1].pos = glm::vec3(3.0f, 0.0f, 0.0f);//光源位置，传递给片段着色器进行光照计算
+		pointLights[1].color = glm::vec3(1.0f, 1.0f, 1.0f);
+		pointLights[1].args = glm::vec2(1.0f, 30.0f);
+
+		spotLights[0].pos = glm::vec3(1.0f, 0.0f, 10.0f);//光源位置，传递给片段着色器进行光照计算
+		spotLights[0].dir = glm::vec3(0.0f, 0.0f, 10.0f);
+		spotLights[0].color = glm::vec3(0.0f, 0.0f, 1.0f);
+		spotLights[0].args = glm::vec4(0.96f, 0.86f, 1.0f, 30.0f);
+
+		VkDeviceSize bufferSize = sizeof(DirectionalLight) * lightInfo.lightCounts.x +
+								  sizeof(PointLight) * lightInfo.lightCounts.y +
+								  sizeof(SpotLight) * lightInfo.lightCounts.z+ sizeof(LightInfo);
+
+		// Create a staging buffer used to upload data to the gpu
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+		void* data;
+		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+		memcpy(data, dirLights.data(), sizeof(DirectionalLight) * lightInfo.lightCounts.x);
+		memcpy((char*)data + sizeof(DirectionalLight) * lightInfo.lightCounts.x, pointLights.data(), sizeof(PointLight) * lightInfo.lightCounts.y);
+		memcpy((char*)data + sizeof(DirectionalLight) * lightInfo.lightCounts.x + sizeof(PointLight) * lightInfo.lightCounts.y, spotLights.data(), sizeof(SpotLight) * lightInfo.lightCounts.z);
+		memcpy((char*)data + sizeof(DirectionalLight) * lightInfo.lightCounts.x + sizeof(PointLight) * lightInfo.lightCounts.y + sizeof(SpotLight) * lightInfo.lightCounts.z, &lightInfo, sizeof(LightInfo));
+		vkUnmapMemory(device, stagingBufferMemory);
+
+		shaderStorageBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+		shaderStorageBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
+
+		// Copy initial particle data to all storage buffers
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+			createBuffer(bufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, shaderStorageBuffers[i], shaderStorageBuffersMemory[i]);
+			copyBuffer(stagingBuffer, shaderStorageBuffers[i], bufferSize);
+		}
+
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+	}
+	void createComputeDescriptorSets() {//创建 计算的描述符集，并将之前创建的 UBO 和 SSBO 绑定到对应的绑定点上
+		// 1. 为每一帧（MAX_FRAMES_IN_FLIGHT）分配独立的描述符集
+		std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, computeDescriptorSetLayout);
+
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = computeDescriptorPool;
+		allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+		allocInfo.pSetLayouts = layouts.data();
+
+		computeDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+		if (vkAllocateDescriptorSets(device, &allocInfo, computeDescriptorSets.data()) != VK_SUCCESS) {
+			throw std::runtime_error("failed to allocate compute descriptor sets!");
+		}
+
+		// 2. 遍历每一帧，配置对应的资源绑定
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+			std::array<VkWriteDescriptorSet, 3> descriptorWrites{};
+
+			// --- Binding 0: UBO (全局参数/相机矩阵等) ---
+			// 依然保持 Per-Frame 设计，确保 CPU 更新当前帧 UBO 时不会干扰正在渲染的上一帧
+			VkDescriptorBufferInfo uniformBufferInfo{};
+			uniformBufferInfo.buffer = uniformBuffers[i];
+			uniformBufferInfo.offset = 0;
+			uniformBufferInfo.range = sizeof(UniformBufferObject);
+
+			descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrites[0].dstSet = computeDescriptorSets[i];
+			descriptorWrites[0].dstBinding = 0;
+			descriptorWrites[0].dstArrayElement = 0;
+			descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			descriptorWrites[0].descriptorCount = 1;
+			descriptorWrites[0].pBufferInfo = &uniformBufferInfo;
+
+			// --- Binding 1: SSBO (光源数据输入) ---
+			// 【核心修改】：光照数据不需要历史帧状态，直接指向同一个只读 SSBO 即可
+			VkDescriptorBufferInfo lightStorageBufferInfo{};
+			lightStorageBufferInfo.buffer = shaderStorageBuffers[(i - 1) % MAX_FRAMES_IN_FLIGHT];//指向上一帧的 SSBO
+			lightStorageBufferInfo.offset = 0;
+			lightStorageBufferInfo.range = VK_WHOLE_SIZE; // 推荐使用 VK_WHOLE_SIZE，避免硬编码数组大小
+
+			descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrites[1].dstSet = computeDescriptorSets[i];
+			descriptorWrites[1].dstBinding = 1;
+			descriptorWrites[1].dstArrayElement = 0;
+			descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+			descriptorWrites[1].descriptorCount = 1;
+			descriptorWrites[1].pBufferInfo = &lightStorageBufferInfo;
+
+			// --- Binding 2: SSBO (计算结果输出) ---
+			// 例如：剔除后的可见光源列表、光照计算结果等
+			VkDescriptorBufferInfo outputStorageBufferInfo{};
+			outputStorageBufferInfo.buffer = shaderStorageBuffers[i]; // 当前帧的ssbo。即计算后写入的输出
+			outputStorageBufferInfo.offset = 0;
+			outputStorageBufferInfo.range = VK_WHOLE_SIZE;
+
+			descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrites[2].dstSet = computeDescriptorSets[i];
+			descriptorWrites[2].dstBinding = 2;
+			descriptorWrites[2].dstArrayElement = 0;
+			descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+			descriptorWrites[2].descriptorCount = 1;
+			descriptorWrites[2].pBufferInfo = &outputStorageBufferInfo;
+
+			vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+		}
+	}
+	void createComputeDescriptorPool() {//创建 计算的描述符池，需包含 UBO 和 SSBO 的描述符数量
+		std::array<VkDescriptorPoolSize, 2> poolSizes{};
+		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+		poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT) * 2; // 因为每帧有两个 SSBO（输入和输出）
+		VkDescriptorPoolCreateInfo poolInfo{};
+		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+		poolInfo.pPoolSizes = poolSizes.data();
+		poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &computeDescriptorPool) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create compute descriptor pool!");
+		}
+	}	
+	void createComputeCommandBuffers() {
+		computeCommandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+
+		VkCommandBufferAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		allocInfo.commandPool = commandPool;
+		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		allocInfo.commandBufferCount = (uint32_t)computeCommandBuffers.size();
+
+		if (vkAllocateCommandBuffers(device, &allocInfo, computeCommandBuffers.data()) != VK_SUCCESS) {
+			throw std::runtime_error("failed to allocate compute command buffers!");
+		}
+	}
+	void recordComputeCommandBuffer(VkCommandBuffer commandBuffer) {
+		VkCommandBufferBeginInfo beginInfo{};
+		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+		if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+			throw std::runtime_error("failed to begin recording compute command buffer!");
+		}
+
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
+
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 1, &computeDescriptorSets[currentFrame], 0, nullptr);
+
+		vkCmdDispatch(commandBuffer, PARTICLE_COUNT / 256, 1, 1);
+
+		if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+			throw std::runtime_error("failed to record compute command buffer!");
+		}
+
+	}
+
+
+
+
+
 	//图形管线相关
 	static std::vector<char> readFile(const std::string& filename) {//读取shader文件，得到其二进制码
 		std::ifstream file(filename, std::ios::ate | std::ios::binary);//从末尾以二进制读取
@@ -1716,26 +2079,20 @@ private:
 
 		可以看出他们是有顺序的
 		*/
-		vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);//等待前一帧完成//3rd参数，等待所有栅栏返回；4th参数，超时时间，此处禁用超时
-
+		vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);//等待前一帧完成（GPU已结束对此帧槽的使用）
 		uint32_t imageIndex;
-		//呈现前交换链失效时（窗口大小变化），重新创建交换链
-		VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);//得到交换链是否不再足够的的信息
-		if (result == VK_ERROR_OUT_OF_DATE_KHR) {//交换链已与表面不兼容，无法再用于渲染。通常在窗口调整大小后发生。
+		VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);//从交换链获取图像索引
+
+		if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {//交换链已与表面不兼容
 			framebufferResized = false;
 			recreateSwapChain();
-			return;
+			return;//不重置栅栏——它仍为signaled状态，下次drawFrame的vkWaitForFences会立即返回
 		}
-		else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {//正常呈现 或 交换链仍然可以成功呈现到表面，但表面属性不再完全匹配：则不做处理。不在这三种中，报错。
+		else if (result != VK_SUCCESS) {
 			throw std::runtime_error("failed to acquire swap chain image!");
 		}
 
-
-
-		vkResetFences(device, 1, &inFlightFences[currentFrame]);//重置栅栏，为下一帧做准备//以上重建交换链是没有提交呈现的，所以不重置栅栏，否则因没有提交工作进行执行，重置后的栅栏永远不会被触发，导致永远锁死。因此需要在最后重置栅栏。确保在重建的return后。
-
-		//从交换链获取图像
-		vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);//禁用超时，选择完成后发出的信号量，已变为可用的交换链图像索引
+		vkResetFences(device, 1, &inFlightFences[currentFrame]);//仅在确认会提交时才重置栅栏
 
 		vkResetCommandBuffer(commandBuffers[currentFrame], 0);//初始化命令缓冲区
 		recordCommandBuffer(commandBuffers[currentFrame], imageIndex);//记录命令缓冲区

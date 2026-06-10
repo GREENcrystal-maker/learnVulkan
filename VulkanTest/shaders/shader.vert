@@ -4,7 +4,7 @@
 struct DirectionalLight {vec3 dir; vec3 color;float intensity;};
 struct PointLight {vec3 pos;vec3 color;vec2 args;};
 struct SpotLight {vec3 pos;vec3 dir;vec3 color;vec4 args; };
-layout(binding = 0) uniform UniformBufferObject {
+layout(binding = 0, std140) uniform UniformBufferObject {
     mat4 model;
     mat4 view;
     mat4 proj;

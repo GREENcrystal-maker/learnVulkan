@@ -3,7 +3,7 @@
 struct DirectionalLight {vec3 dir; vec3 color;float intensity;};
 struct PointLight {vec3 pos;vec3 color;vec2 args;};
 struct SpotLight {vec3 pos;vec3 dir;vec3 color;vec4 args; };
-layout(binding = 0) uniform UniformBufferObject {
+layout(binding = 0, std140) uniform UniformBufferObject {
     mat4 model;
     mat4 view;
     mat4 proj;
@@ -34,7 +34,7 @@ vec3 CalcBlinnPhong(vec3 norm, vec3 lightDir, vec3 viewDir, vec3 ambient,vec3 ma
     vec3 halfDir = normalize(lightDir + viewDir);
     vec3 diff = materialColor*pow(max(dot(norm, lightDir), 0.0), p1);
     vec3 spec = lightColor*pow(dot(norm, halfDir), p2);
-    return intensity * (diff + spec); + materialColor*ambient;
+    return intensity * (diff + spec) + materialColor*ambient;
 }
 
 // ================= 1. 方向光计算 =================
@@ -73,7 +73,7 @@ vec3 CalcSpotLight(SpotLight light, vec3 norm, vec3 viewDir,vec3 ambient,vec3 ma
 void main() {
     vec3 norm = normalize(normal);
     vec3 viewDir = normalize(ubo.viewPos-fragPos);
-    vec3 result =vec3(texture(texSampler, fragTexCoord));
+    vec3 result =texture(texSampler, fragTexCoord).rgb;
     vec3 ambient=vec3(ubo.ambientArgs)*ubo.ambientArgs.w;//ca
 
     for(int i = 0; i < ubo.lightCounts.x; ++i) {
