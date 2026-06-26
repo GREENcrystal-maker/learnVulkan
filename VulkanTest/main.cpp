@@ -184,16 +184,16 @@ struct UniformBufferObject {
 	alignas(16) glm::mat4 model;
 	alignas(16) glm::mat4 view;
 	alignas(16) glm::mat4 proj;
-
-	alignas(16) DirectionalLight dirLights[1];   // 通常场景只有一个主方向光(太阳)
-	alignas(16) PointLight pointLights[2];       // 最多8个点光源
-	alignas(16) SpotLight spotLights[1];         // 最多4个聚光灯
-
-	alignas(16) glm::ivec3 lightCounts;          // x=dirCount, y=pointCount, z=spotCount
-	alignas(16) glm::vec4 ambientArgs; // xyz，w=rgb，强度
-	alignas(16) glm::vec2 strength;//x=漫反射强度系数，y=镜面反射强度系数,即公式的两个p幂
-	alignas(16) glm::vec3 viewPos;//摄像机位置
 	alignas(16) glm::mat4 normalMatrix;//模型（model)矩阵左上角 3x3 部分的逆转置矩阵
+};
+struct infoToFrag {
+	alignas(16) glm::vec3 viewPos;
+	alignas(16) DirectionalLight dirLights[1];
+	alignas(16) PointLight pointLights[2];
+	alignas(16) SpotLight spotLights[1];
+	alignas(16) glm::ivec3 lightCounts;
+	alignas(16) glm::vec4 ambientArgs;
+	alignas(16) glm::vec2 strength;
 };
 struct ModelInfo {// 记录每个模型的索引数量和起始偏移
 	uint32_t indexCount;
@@ -249,6 +249,10 @@ private:
 	std::vector<VkBuffer> uniformBuffers;//与正在处理帧数一样多的统一缓冲区句柄
 	std::vector<VkDeviceMemory> uniformBuffersMemory;//它们的内存
 	std::vector<void*> uniformBuffersMapped;//存储每个统一缓冲区的映射内存地址的向量，用于memcpy，需要成员记录地址是因为memcpy需要在create外调用
+	VkBuffer staticInfoBuffer;//静态信息UBO，存放不每帧更新的光照等数据
+	VkDeviceMemory staticInfoBufferMemory;
+	void* staticInfoMapped;
+
 	VkDescriptorPool descriptorPool;//描述符池，管理描述符集的内存分配
 	std::vector<VkDescriptorSet> descriptorSets;//描述符集，描述符的集合，每帧分配一个，存储在向量中
 	std::vector<VkImage> textureImage;//纹理的vulkan的图像对象，其像素称为纹素
@@ -299,6 +303,7 @@ private:
 		createVertexBuffer();
 		createIndexBuffer();
 		createUniformBuffers();
+		createStaticInfoBuffer();
 		createDescriptorPool();
 		createDescriptorSets();
 		createCommandBuffer();
@@ -336,6 +341,8 @@ private:
 			vkDestroyBuffer(device, uniformBuffers[i], nullptr);
 			vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
 		}
+		vkDestroyBuffer(device, staticInfoBuffer, nullptr);
+		vkFreeMemory(device, staticInfoBufferMemory, nullptr);
 		vkDestroyDescriptorPool(device, descriptorPool, nullptr);//同时完成池内分配句柄释放
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
@@ -834,7 +841,7 @@ private:
 	}
 	void createDescriptorSetLayout() {
 		VkDescriptorSetLayoutBinding uboLayoutBinding{};//统一缓冲区的绑定
-		uboLayoutBinding.binding = 0;
+		uboLayoutBinding.binding = 0;//与着色器写的binding相同
 		uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;//描述符类型，表示绑定资源的类型，此处为统一缓冲区
 		uboLayoutBinding.descriptorCount = 1;//描述符数量
 		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;//在哪些着色器阶段引用描述符，此处为顶点着色器
@@ -845,8 +852,14 @@ private:
 		samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		samplerLayoutBinding.pImmutableSamplers = nullptr;
 		samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;//在片段着色器阶段引用描述符
+		VkDescriptorSetLayoutBinding staticInfoLayoutBinding{};//静态信息UBO的绑定
+		staticInfoLayoutBinding.binding = 2;
+		staticInfoLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		staticInfoLayoutBinding.descriptorCount = 1;
+		staticInfoLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+		staticInfoLayoutBinding.pImmutableSamplers = nullptr;
 
-		std::array<VkDescriptorSetLayoutBinding, 2> bindings = { uboLayoutBinding, samplerLayoutBinding };
+		std::array<VkDescriptorSetLayoutBinding, 3> bindings = { uboLayoutBinding, samplerLayoutBinding, staticInfoLayoutBinding };
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -871,11 +884,36 @@ private:
 			vkMapMemory(device, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);//使用 vkMapMemory 在创建后立即映射缓冲区。不unmap，持续每帧更新指针数据
 		}
 	}
+	void createStaticInfoBuffer() {//创建静态信息UBO，只在初始化时写入一次，之后每帧不再更新
+		VkDeviceSize bufferSize = sizeof(infoToFrag);///同于上一个函数的创建过程
+		createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staticInfoBuffer, staticInfoBufferMemory);
+		vkMapMemory(device, staticInfoBufferMemory, 0, bufferSize, 0, &staticInfoMapped);
+
+		infoToFrag staticInfo{};//不需要update，所以创建后立即将信息写入内存，只写一次
+		staticInfo.viewPos = glm::vec3(0.0f, 0.0f, 10.0f);
+		staticInfo.dirLights[0].dir = glm::vec3(-1.0f, -1.0f, 0.0f);
+		staticInfo.dirLights[0].color = glm::vec3(1.0f, 1.0f, 0.0f);
+		staticInfo.dirLights[0].intensity = 1.0;
+		staticInfo.pointLights[0].pos = glm::vec3(3.0f, 0.0f, 10.0f);
+		staticInfo.pointLights[0].color = glm::vec3(1.0f, 1.0f, 1.0f);
+		staticInfo.pointLights[0].args = glm::vec2(1.0f, 30.0f);
+		staticInfo.pointLights[1].pos = glm::vec3(3.0f, 0.0f, 0.0f);
+		staticInfo.pointLights[1].color = glm::vec3(1.0f, 1.0f, 1.0f);
+		staticInfo.pointLights[1].args = glm::vec2(1.0f, 30.0f);
+		staticInfo.spotLights[0].pos = glm::vec3(1.0f, 0.0f, 10.0f);
+		staticInfo.spotLights[0].dir = glm::vec3(0.0f, 0.0f, 10.0f);
+		staticInfo.spotLights[0].color = glm::vec3(0.0f, 0.0f, 1.0f);
+		staticInfo.spotLights[0].args = glm::vec4(0.96f, 0.86f, 1.0f, 30.0f);
+		staticInfo.lightCounts = glm::ivec3(1, 2, 1);
+		staticInfo.ambientArgs = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+		staticInfo.strength = glm::vec2(1.0f, 1.0f);
+		memcpy(staticInfoMapped, &staticInfo, sizeof(staticInfo));
+	}
 	void updateUniformBuffer(uint32_t currentImage, int sign) {//描述每帧进行的变换
 		//drawFrame 函数中提交下一帧之前添加对其的调用，更新uniform数据
 		processInput(window);
 		UniformBufferObject ubo{};//以下计算出下一帧该有的2d坐标，并存储在ubo结构体中，传递给顶点着色器进行变换
-
+		/*
 		ubo.lightCounts = glm::ivec3(1, 2, 1);
 		ubo.dirLights[0].dir = glm::vec3(-1.0f, -1.0f, 0.0f);//光源方向，传递给片段着色器进行光照计算
 		ubo.dirLights[0].color = glm::vec3(1.0f, 1.0f, 0.0f);//光源颜色，传递给片段着色器进行光照计算
@@ -895,13 +933,14 @@ private:
 		ubo.spotLights[0].args = glm::vec4(0.96f, 0.86f, 1.0f, 30.0f);
 
 		ubo.viewPos = glm::vec3(0.0f, 0.0f, 10.0f);
+		*/
 		//模型转换，描述模型每帧进行的变化，即把以3d的物体局部坐标（及其变化）投射到世界坐标
 		ubo.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, trans_z[sign])) *
 			glm::scale(glm::mat4(1.0f), glm::vec3(scale[sign], scale[sign], 1.0f)) *
 			glm::rotate(glm::mat4(1.0f), rotateAngle[sign], glm::vec3(0.0f, 1.0f, 0.0f));//参数：开始变换的初始矩阵、旋转角度、旋转轴。此处：单位矩阵作为基础样貌，旋转角度为每过了一秒增加九十度，即每秒旋转九十度；旋转轴为z轴
 
 		//视图转换，指定怎么从3d世界坐标转换到摄像头画面的2d坐标，根据是摄像头摆放情况
-		ubo.view = glm::lookAt(ubo.viewPos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.5f, 0));//参数：眼睛（摄像头）位置、观察中心位置、向上轴。向上轴是一个方向向量，指示摄像头的正上为哪个方向。此处：相当于上方以 45 度角查看几何体
+		ubo.view = glm::lookAt(glm::vec3(0.0f, 0.0f, 10.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.5f, 0));//参数：眼睛（摄像头）位置、观察中心位置、向上轴。向上轴是一个方向向量，指示摄像头的正上为哪个方向。此处：相当于上方以 45 度角查看几何体
 		//投影转换，指定观察者需要的物体远近透视、生成比例，以明确物体各世界坐标应该怎样投射到2d，根据是摄像头的视野情况
 		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);//参数：zoom，画面比例，近裁剪面和远裁剪面。zoom决定了虚拟摄像机镜头的“张开程度”，可以把它完全等同于现实相机的镜头焦距，裁剪面规定了距离镜头距离多少范围可被显示，要够大。此处：一般使用的45度适中zoom，用交换链图像大小作为看东西视口的大小
 		ubo.proj[1][1] *= -1;//GLM 以 OpenGL 的方式处理坐标，vulkan的y轴是反的，所以需要翻转y轴
@@ -911,11 +950,13 @@ private:
 		memcpy(uniformBuffersMapped[bufferIndex], &ubo, sizeof(ubo));//数据复制到当前统一缓冲区，与我们对顶点缓冲区所做的操作完全相同，只是没有临时缓冲区
 	}
 	void createDescriptorPool() {//创建描述符池，描述符池存储统一缓冲区和纹理采样器的信息
-		std::array<VkDescriptorPoolSize, 2> poolSizes{};//描述符池大小，指定了每种类型的描述符需要多少个
+		std::array<VkDescriptorPoolSize, 3> poolSizes{};//描述符池大小，指定了每种类型的描述符需要多少个
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;//包含的描述符类型，第一个为统一缓冲区
 		poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT*ITEM_COUNT);//描述符数量，为每一帧分配一个描述符
 		poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;//第二个为采样器
 		poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT * ITEM_COUNT);//只需一个采样器即可
+		poolSizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;//静态信息UBO
+		poolSizes[2].descriptorCount = 1;//只需要一个静态UBO
 
 		VkDescriptorPoolCreateInfo poolInfo{};
 		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -951,9 +992,14 @@ private:
 			imageInfo.imageView = textureImageView[modelIndex];
 			imageInfo.sampler = textureSampler;
 
+			VkDescriptorBufferInfo staticInfoBufInfo{};
+			staticInfoBufInfo.buffer = staticInfoBuffer;
+			staticInfoBufInfo.offset = 0;
+			staticInfoBufInfo.range = sizeof(infoToFrag);
+
 			//更新配置
 
-			std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+			std::array<VkWriteDescriptorSet, 3> descriptorWrites{};
 			//统一缓冲区部分
 			descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			descriptorWrites[0].dstSet = descriptorSets[i];//要更新的描述符集
@@ -970,6 +1016,14 @@ private:
 			descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 			descriptorWrites[1].descriptorCount = 1;
 			descriptorWrites[1].pImageInfo = &imageInfo;
+			//静态信息UBO部分
+			descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrites[2].dstSet = descriptorSets[i];
+			descriptorWrites[2].dstBinding = 2;
+			descriptorWrites[2].dstArrayElement = 0;
+			descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			descriptorWrites[2].descriptorCount = 1;
+			descriptorWrites[2].pBufferInfo = &staticInfoBufInfo;
 
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 		}

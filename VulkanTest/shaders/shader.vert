@@ -1,22 +1,10 @@
 #version 450
 
 
-struct DirectionalLight {vec3 dir; vec3 color;float intensity;};
-struct PointLight {vec3 pos;vec3 color;vec2 args;};
-struct SpotLight {vec3 pos;vec3 dir;vec3 color;vec4 args; };
 layout(binding = 0) uniform UniformBufferObject {
     mat4 model;
     mat4 view;
     mat4 proj;
-
-    DirectionalLight dirLights[1];
-    PointLight pointLights[2];
-    SpotLight spotLights[1];
-
-    ivec3 lightCounts;
-    vec4 ambientArgs;
-    vec2 strength;
-    vec3 viewPos;
     mat4 normalMatrix;
 } ubo;
 
