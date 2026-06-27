@@ -158,10 +158,14 @@ private:
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		vkDestroyRenderPass(device, renderPass, nullptr);
 
+
+		vkDestroyDevice(device, nullptr);//先销毁逻辑设备
+		if (enableValidationLayers) {
+			DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
+		}
+
 		vkDestroySurfaceKHR(instance, surface, nullptr);//确保在实例之前销毁表面
 		vkDestroyInstance(instance, nullptr);
-
-		vkDestroyDevice(device, nullptr);//销毁逻辑设备
 
 		glfwDestroyWindow(window);
 		glfwTerminate();
